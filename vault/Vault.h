@@ -6,9 +6,6 @@
 #include <QByteArray>
 #include <QString>
 
-class Kdf;
-class Mac;
-
 /**
  * @brief ローカル Vault（機密情報管理コア）
  *
@@ -63,6 +60,13 @@ public:
      */
     bool changePin(const SecureBuffer &oldPin, const SecureBuffer &newPin);
 
+    /**
+     * @brief 既存EMKを削除して新しいPINで再セットアップする。
+     *
+     * 既存のMKで暗号化されたデータは復号不能になる不可逆操作。
+     */
+    bool reset(const SecureBuffer &newPin);
+
 private:
     static constexpr int VERSION = 2;
     static constexpr int SALT_SIZE = 16;
@@ -77,7 +81,6 @@ private:
     SecureBuffer mk_;
     bool unlocked_ = false;
 
-    bool hasEmk() const;
     SecureBuffer deriveKek(const SecureBuffer &pin, const QByteArray &salt, quint32 opsLimit, quint32 memLimit) const;
 
     QByteArray generateRandom(int length) const;

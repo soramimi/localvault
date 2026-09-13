@@ -59,11 +59,6 @@ public:
      */
     void unlock();
 
-    /**
-     * @brief ロック状態を取得する
-     */
-    bool isLocked() const;
-
 private:
     std::vector<uint8_t> data_;
     bool locked_ = false;

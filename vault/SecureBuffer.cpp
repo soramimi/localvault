@@ -185,8 +185,3 @@ void SecureBuffer::unlock()
     secure_unlock(data_.data(), data_.size());
     locked_ = false;
 }
-
-bool SecureBuffer::isLocked() const
-{
-    return locked_;
-}

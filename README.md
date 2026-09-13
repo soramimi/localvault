@@ -63,9 +63,6 @@ obfuscation/
 ├── main.cpp                     # テストランナー / GUI デモ
 ├── vault/                       # QtCore のみの Vault コア
 │   ├── SecureBuffer.h/cpp
-│   ├── ChaCha20.h/cpp
-│   ├── Kdf.h/cpp
-│   ├── Mac.h/cpp
 │   ├── Vault.h/cpp
 │   └── SecretStorage.h
 ├── storage/                     # ストレージバックエンド
@@ -98,6 +95,9 @@ make
 
 # GUI デモ実行
 ./obfuscation
+
+# 既存Vaultを削除（不可逆。次回GUI起動時に再セットアップ）
+./obfuscation --reset --yes
 ```
 
 ### macOS
@@ -128,54 +128,6 @@ std::fill(buf.begin(), buf.end(), 0xab);       // データ書き込み
 buf.lock();                                    // スワップ防止（可能な場合）
 // ... 使用 ...
 buf.clear();                                   // 明示的に消去
-```
-
-### 旧プリミティブ
-
-`ChaCha20`、`Kdf`、`Mac`は既存の実験・互換用コードであり、Vaultは使用しない。新規の機密データ保存では、Vaultを通じたArgon2idとXChaCha20-Poly1305のみを使用する。
-
-### ChaCha20（Vaultでは未使用）
-
-RFC 8439 準拠のストリーム暗号。デフォルトコンストラクタでは CSPRNG として動作する。
-
-```cpp
-#include "vault/ChaCha20.h"
-
-uint8_t key[ChaCha20::KEY_SIZE] = { /* 32 bytes */ };
-uint8_t nonce[ChaCha20::NONCE_SIZE] = { /* 12 bytes */ };
-
-QByteArray plain = "secret data";
-QByteArray cipher(plain.size(), 0);
-
-ChaCha20 enc(key, nonce);
-enc.crypt(reinterpret_cast<const uint8_t *>(plain.constData()),
-          reinterpret_cast<uint8_t *>(cipher.data()),
-          plain.size());
-
-// 復号
-QByteArray decrypted(plain.size(), 0);
-ChaCha20 dec(key, nonce);
-dec.crypt(reinterpret_cast<const uint8_t *>(cipher.constData()),
-          reinterpret_cast<uint8_t *>(decrypted.data()),
-          plain.size());
-```
-
-### Kdf / Mac（Vaultでは未使用）
-
-```cpp
-#include "vault/Kdf.h"
-#include "vault/Mac.h"
-
-SecureBuffer password;
-password.assign("password", 8);
-
-// PBKDF2-SHA256 で 32 バイト導出（実験・互換用途のみ）
-Pbkdf2Sha256 kdf(600000);
-SecureBuffer key = kdf.derive(password, "salt", 32);
-
-// HMAC-SHA256
-HmacSha256 hmac;
-QByteArray tag = hmac.compute(key, "message");
 ```
 
 ### Vault
@@ -219,6 +171,9 @@ SecureBuffer newPin;
 newPin.assign("5678", 4);
 vault.changePin(pin, newPin);
 
+// 既存Vaultを破棄して新しいPINで再セットアップ（不可逆）
+vault.reset(newPin);
+
 // 使用後はロック
 vault.lock();
 ```
@@ -249,6 +204,14 @@ if (ok) {
 EMK と暗号文には、magic、形式バージョン、レコード種別、暗号方式、KDF方式・計算/メモリコスト（EMKのみ）を含め、ヘッダ全体をAEADの追加認証データとして保護する。現行形式は `VLT2` / version 2 である。
 
 初期の試作版（ChaCha20 + HMAC、version 1）のEMKおよび暗号文とは互換性がない。試作版のデータを利用している場合は、その版で復号してから本版で再セットアップ・再暗号化すること。新規の`setup()`は既存EMKを上書きしない。
+
+## Vaultのリセット
+
+リセットは既存EMKを削除し、新しいMKでVaultを作り直す不可逆操作である。旧MKで暗号化したデータは復号できなくなるため、必要なデータは先に復号・退避すること。
+
+- GUIでは、既存Vaultを検出した際に「Reset Vault」を選択し、警告確認後に新PINを設定する。
+- CLIでは`./obfuscation --reset --yes`を実行する。CLI操作はEMKを削除し、次の通常起動時にGUIで新規セットアップを行う。`--yes`なしでは何も削除しない。
+- アプリケーションコードからは`Vault::reset(const SecureBuffer &newPin)`を使用する。
 
 ### バックエンドの直接利用
 

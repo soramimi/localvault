@@ -9,9 +9,6 @@ PKGCONFIG += libsodium
 
 HEADERS += \
 	gui/PinDialog.h \
-	vault/ChaCha20.h \
-	vault/Kdf.h \
-	vault/Mac.h \
 	vault/SecretStorage.h \
 	vault/SecureBuffer.h \
 	vault/Vault.h \
@@ -20,9 +17,6 @@ HEADERS += \
 
 SOURCES += \
 	gui/PinDialog.cpp \
-	vault/ChaCha20.cpp \
-	vault/Kdf.cpp \
-	vault/Mac.cpp \
 	vault/SecureBuffer.cpp \
 	vault/Vault.cpp \
 	storage/FileBackend.cpp \

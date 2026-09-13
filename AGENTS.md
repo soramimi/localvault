@@ -23,7 +23,6 @@
 - 暗号化アルゴリズム: libsodium の XChaCha20-Poly1305（AEAD）
 - 鍵導出: libsodium の Argon2id（opslimit 3、memlimit 64 MiB）
 - 乱数・安全な消去・メモリロック: libsodium
-- `vault/ChaCha20`、`Kdf`、`Mac` は互換・実験用のプリミティブとして残るが、Vaultの新規実装では使用しない
 - 対象プラットフォーム: Linux, macOS, Windows（マルチプラットフォーム対応）
 
 ## 現状のコード
@@ -33,12 +32,7 @@
 | ファイル | 内容 |
 |---|---|
 | `main.cpp` | 自己テスト用エントリーポイント、およびGUIデモ |
-| `obfuscation.h/cpp` | 旧難読化モジュール（XOR + 固定シード）。現状はビルドから除外 |
-| `crc32.h` | CRC32 チェックサム実装（旧モジュールで使用）。現状は未使用 |
-| `vault/ChaCha20.h/cpp` | 旧・実験用のChaCha20ストリーム暗号。Vaultには使用しない |
 | `vault/SecureBuffer.h/cpp` | libsodiumの安全な消去・メモリロックを使用する機密メモリコンテナ |
-| `vault/Kdf.h/cpp` | 旧・実験用のPBKDF2-SHA256 |
-| `vault/Mac.h/cpp` | 旧・実験用のHMAC-SHA256 |
 | `vault/SecretStorage.h` | セキュアストレージバックエンド I/F（Phase 2 で追加） |
 | `vault/Vault.h/cpp` | Argon2id / XChaCha20-Poly1305を用いる2段階鍵体系Vaultコア |
 | `storage/FileBackend.h/cpp` | ファイルベースフォールバックバックエンド（Phase 2 で追加） |
@@ -48,7 +42,7 @@
 
 ### 実装済みフェーズ
 
-- **Phase 1**: 暗号化プリミティブ（SecureBuffer, ChaCha20, KDF, MAC）
+- **Phase 1**: 暗号化基盤（SecureBuffer）
 - **Phase 2**: Vault コア + FileBackend
 - **Phase 3**: SystemKeychainBackend（Linux libsecret / macOS Keychain / Windows DPAPI）
 - **Phase 4**: PIN 入力ダイアログ + GUI デモ統合
@@ -56,8 +50,7 @@
 
 ### 既知の課題
 
-- 旧 `obfuscation` モジュールはセキュリティ的に不十分
-  - 新しい `Vault` API に置き換える方向
+- 旧難読化・独自暗号プリミティブは削除済み。新規の機密データ保存はVault APIのみを使用する
 
 ## 推奨アーキテクチャ
 
@@ -116,13 +109,7 @@
    - 可能であれば `mlock` / `VirtualLock` でメモリロック
    - Qt 依存なし
 
-2. **ChaCha20 のストリーム暗号化 API 拡張**
-   - 外部から `key[32]` と `nonce[12]` を設定できるコンストラクタ/メソッドを追加
-   - 入力バイト列とキーストリームを XOR する `crypt()` メソッドを追加
-   - カウンター管理を改善
-   - Qt 依存なし
-
-3. **AEAD / KDF の実装**
+2. **AEAD / KDF の実装**
    - libsodiumのArgon2idとXChaCha20-Poly1305を使用する
    - 自作の暗号合成・タグ比較を行わない
 
@@ -138,6 +125,7 @@
      - `SecureBuffer decryptToSecureBuffer(const QByteArray &cipher)` — 推奨のデータ復号API
      - `QByteArray decrypt(const QByteArray &cipher)` — 互換用。平文コピーを生成するため新規コードでは避ける
      - `bool changePin(const SecureBuffer &oldPin, const SecureBuffer &newPin)` — PIN変更
+     - `bool reset(const SecureBuffer &newPin)` — 既存EMKを破棄して再セットアップする不可逆操作
    - QtCore のみ
 
 2. **セキュアストレージバックエンドの抽象インターフェース**
@@ -172,7 +160,7 @@
    - または、テスト用のエントリーポイントとして残す
 
 3. **旧モジュールの整理**
-   - 必要に応じて `obfuscation.h/cpp` と `crc32.h` を削除または非推奨化
+   - 旧難読化・独自暗号プリミティブは削除済み
 
 ### Phase 5: ビルド設定とテスト
 
@@ -201,9 +189,6 @@ obfuscation/
 ├── main.cpp                            # アプリエントリーポイント
 ├── vault/                              # QtCore のみのVaultコア
 │   ├── SecureBuffer.h/cpp
-│   ├── ChaCha20.h/cpp                  # 既存を拡張
-│   ├── Kdf.h/cpp
-│   ├── Mac.h/cpp
 │   ├── Vault.h/cpp
 │   └── SecretStorage.h
 ├── storage/                            # ストレージバックエンド
@@ -233,6 +218,9 @@ sudo apt-get install libsodium-dev libsecret-1-dev libglib2.0-dev
 # ビルド
 qmake obfuscation.pro
 make
+
+# 既存Vaultを削除（不可逆）
+./obfuscation --reset --yes
 ```
 
 ### macOS
@@ -254,6 +242,7 @@ nmake  # または mingw32-make
 - Vaultの新規データはXChaCha20-Poly1305 AEADで保護される。独自のChaCha20/HMAC合成を新規実装で使用しないこと
 - Argon2idのコストはEMKヘッダに記録する。ヘッダ改ざんによる過大なメモリ・CPU消費を避けるため、実装は受入上限を設けている
 - 形式は `VLT2` / version 2。試作版のversion 1のEMK・暗号文には互換性がない
+- Vaultのリセットは既存MKを失わせ、旧暗号文を復号不能にする。GUIでは確認・新PIN入力を必須とし、CLIでは`--reset --yes`を必須とする
 - 復号後の機密情報（APIキー等）は `SecureBuffer` で管理し、使用後は即座に消去すること
 - スワップファイルへの漏洩を防ぐため、可能な限りメモリロックを行うこと
 - OSセキュアストレージが利用できない場合の `FileBackend` は、あくまで最後の手段として位置づけること

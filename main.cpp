@@ -1,10 +1,11 @@
 #include <QApplication>
 #include <QByteArray>
-#include <QCryptographicHash>
-#include <QDir>
+#include <QCoreApplication>
 #include <QMessageBox>
+#include <QPushButton>
 #include <QStandardPaths>
 #include <QTemporaryDir>
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <memory>
@@ -12,9 +13,6 @@
 #include "gui/PinDialog.h"
 #include "storage/FileBackend.h"
 #include "storage/SystemKeychainBackend.h"
-#include "vault/ChaCha20.h"
-#include "vault/Kdf.h"
-#include "vault/Mac.h"
 #include "vault/SecureBuffer.h"
 #include "vault/Vault.h"
 
@@ -34,11 +32,6 @@ static void check(bool condition, const char *name)
     }
 }
 
-static QByteArray toHex(const SecureBuffer &buf)
-{
-    return QByteArray(reinterpret_cast<const char *>(buf.data()), static_cast<int>(buf.size())).toHex();
-}
-
 static SecureBuffer pinFromUtf8(const char *s)
 {
     SecureBuffer pin;
@@ -56,66 +49,6 @@ static void testSecureBuffer()
     check(!buf.resize(64), "SecureBuffer rejects resize while locked");
     buf.clear();
     check(buf.empty(), "SecureBuffer empty after clear");
-}
-
-static void testSha256()
-{
-    QCryptographicHash hash(QCryptographicHash::Sha256);
-    hash.addData("abc");
-    QByteArray result = hash.result();
-    QByteArray expected = QByteArray::fromHex("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
-    check(result == expected, "SHA256 abc vector");
-}
-
-static void testChaCha20()
-{
-    uint8_t key[ChaCha20::KEY_SIZE] = {};
-    uint8_t nonce[ChaCha20::NONCE_SIZE] = {};
-    for (int i = 0; i < ChaCha20::KEY_SIZE; i++) key[i] = static_cast<uint8_t>(i);
-    for (int i = 0; i < ChaCha20::NONCE_SIZE; i++) nonce[i] = static_cast<uint8_t>(i + 0x10);
-
-    const char *plaintext = "Hello, ChaCha20 World! This is a test message.";
-    size_t len = strlen(plaintext);
-
-    QByteArray encrypted(len, 0);
-    QByteArray decrypted(len, 0);
-
-    ChaCha20 enc(key, nonce);
-    enc.crypt(reinterpret_cast<const uint8_t *>(plaintext), reinterpret_cast<uint8_t *>(encrypted.data()), len);
-
-    check(encrypted != QByteArray(plaintext, static_cast<int>(len)), "ChaCha20 encryption changes data");
-
-    ChaCha20 dec(key, nonce);
-    dec.crypt(reinterpret_cast<const uint8_t *>(encrypted.constData()), reinterpret_cast<uint8_t *>(decrypted.data()), len);
-
-    check(decrypted == QByteArray(plaintext, static_cast<int>(len)), "ChaCha20 roundtrip");
-}
-
-static void testHmacSha256()
-{
-    HmacSha256 hmac;
-
-    SecureBuffer key(20);
-    std::fill(key.begin(), key.end(), 0x0b);
-    check(hmac.compute(key, "Hi There") ==
-              QByteArray::fromHex("b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7"),
-          "HMAC-SHA256 RFC 4231 vector");
-
-    SecureBuffer key2;
-    key2.assign("key", 3);
-    check(hmac.compute(key2, "The quick brown fox jumps over the lazy dog") ==
-              QByteArray::fromHex("f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8"),
-          "HMAC-SHA256 string key vector");
-}
-
-static void testPbkdf2Sha256()
-{
-    SecureBuffer password;
-    password.assign("password", 8);
-    Pbkdf2Sha256 kdf(1);
-    SecureBuffer derived = kdf.derive(password, "salt", 32);
-    QByteArray expected = QByteArray::fromHex("120fb6cffcf8b32c43e7225256c4f837a86548c92ccc35480805987cb70be17b");
-    check(toHex(derived) == expected.toHex(), "PBKDF2-SHA256 RFC 7914 vector");
 }
 
 static void testVaultSetupUnlock()
@@ -194,6 +127,26 @@ static void testVaultChangePin()
     check(vault.decrypt(encrypted) == secret, "Vault decrypt after PIN change");
 }
 
+static void testVaultReset()
+{
+    QTemporaryDir tempDir;
+    FileBackend backend(tempDir.path());
+    Vault vault(&backend);
+
+    SecureBuffer oldPin = pinFromUtf8("oldpin");
+    SecureBuffer newPin = pinFromUtf8("newpin");
+    check(vault.setup(oldPin), "Vault setup for reset");
+    QByteArray oldCipher = vault.encrypt("OldSecret");
+
+    check(vault.reset(newPin), "Vault reset");
+    check(vault.isUnlocked(), "Vault unlocked after reset");
+    check(vault.decrypt(oldCipher).isEmpty(), "Vault cannot decrypt pre-reset data");
+
+    vault.lock();
+    check(!vault.unlock(oldPin), "Vault old PIN fails after reset");
+    check(vault.unlock(newPin), "Vault new PIN succeeds after reset");
+}
+
 static void testVaultTamperedData()
 {
     QTemporaryDir tempDir;
@@ -260,17 +213,14 @@ static void testVaultWithSystemKeychain()
 
 static int runTests()
 {
-    std::printf("=== Phase 1: Cryptographic Primitives Tests ===\n");
+    std::printf("=== Secure Memory Tests ===\n");
     testSecureBuffer();
-    testSha256();
-    testChaCha20();
-    testHmacSha256();
-    testPbkdf2Sha256();
 
     std::printf("\n=== Phase 2: Vault Core Tests ===\n");
     testVaultSetupUnlock();
     testVaultWrongPin();
     testVaultChangePin();
+    testVaultReset();
     testVaultTamperedData();
 
     std::printf("\n=== Phase 3: System Keychain Backend Tests ===\n");
@@ -295,6 +245,45 @@ static std::unique_ptr<ISecretStorageBackend> createBackend()
     return std::make_unique<FileBackend>(configDir + "/emk");
 }
 
+static int runCliReset()
+{
+    auto backend = createBackend();
+    Vault vault(backend.get(), QStringLiteral("vault_emk"));
+    if (!vault.isAvailable()) {
+        std::fprintf(stderr, "ERROR: No Vault storage backend is available.\n");
+        return 1;
+    }
+    if (!vault.isSetup()) {
+        std::printf("No existing Vault was found.\n");
+        return 0;
+    }
+    if (!backend->remove(QStringLiteral("vault_emk"))) {
+        std::fprintf(stderr, "ERROR: Failed to remove the existing Vault.\n");
+        return 1;
+    }
+    std::printf("Vault removed. Run the application normally to set up a new Vault.\n");
+    return 0;
+}
+
+static bool resetVaultFromGui(Vault &vault)
+{
+    const auto confirmation = QMessageBox::warning(
+        nullptr, QObject::tr("Reset Vault"),
+        QObject::tr("This permanently deletes the current Vault. Data encrypted with its current key cannot be recovered.\n\nContinue?"),
+        QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Cancel);
+    if (confirmation != QMessageBox::Yes) return false;
+
+    bool ok = false;
+    SecureBuffer newPin = PinDialog::setupPin(nullptr, &ok);
+    if (!ok || newPin.empty()) return false;
+    const bool reset = vault.reset(newPin);
+    newPin.clear();
+    if (!reset) {
+        QMessageBox::critical(nullptr, QObject::tr("Reset Failed"), QObject::tr("Failed to reset the Vault."));
+    }
+    return reset;
+}
+
 static int runGuiDemo(int argc, char *argv[])
 {
     QApplication app(argc, argv);
@@ -302,7 +291,20 @@ static int runGuiDemo(int argc, char *argv[])
     auto backend = createBackend();
     Vault vault(backend.get(), QStringLiteral("vault_emk"));
 
-    if (!vault.isSetup()) {
+    if (vault.isSetup()) {
+        QMessageBox choice;
+        choice.setWindowTitle(QObject::tr("Vault"));
+        choice.setText(QObject::tr("Unlock the existing Vault, or permanently reset it?"));
+        QPushButton *unlockButton = choice.addButton(QObject::tr("Unlock"), QMessageBox::AcceptRole);
+        QPushButton *resetButton = choice.addButton(QObject::tr("Reset Vault"), QMessageBox::DestructiveRole);
+        choice.addButton(QMessageBox::Cancel);
+        choice.exec();
+        if (choice.clickedButton() == resetButton) {
+            if (!resetVaultFromGui(vault)) return 0;
+        } else if (choice.clickedButton() != unlockButton) {
+            return 0;
+        }
+    } else {
         bool ok = false;
         SecureBuffer pin = PinDialog::setupPin(nullptr, &ok);
         if (!ok || pin.empty()) {
@@ -320,18 +322,17 @@ static int runGuiDemo(int argc, char *argv[])
         QMessageBox::information(nullptr, QObject::tr("Vault Setup"), QObject::tr("Vault has been set up successfully."));
     }
 
-    bool ok = false;
-    SecureBuffer pin = PinDialog::requestPin(nullptr, &ok);
-    if (!ok || pin.empty()) {
-        return 0;
-    }
-
-    if (!vault.unlock(pin)) {
-        QMessageBox::critical(nullptr, QObject::tr("Unlock Failed"), QObject::tr("Incorrect PIN or corrupted Vault data."));
+    if (!vault.isUnlocked()) {
+        bool ok = false;
+        SecureBuffer pin = PinDialog::requestPin(nullptr, &ok);
+        if (!ok || pin.empty()) return 0;
+        if (!vault.unlock(pin)) {
+            QMessageBox::critical(nullptr, QObject::tr("Unlock Failed"), QObject::tr("Incorrect PIN or corrupted Vault data."));
+            pin.clear();
+            return 1;
+        }
         pin.clear();
-        return 1;
     }
-    pin.clear();
 
     QByteArray secret = "API_KEY=sk-abcdef1234567890";
     QByteArray encrypted = vault.encrypt(secret);
@@ -357,6 +358,15 @@ int main(int argc, char *argv[])
 {
     if (argc > 1 && QString::fromLatin1(argv[1]) == QStringLiteral("--test")) {
         return runTests();
+    }
+
+    if (argc > 1 && QString::fromLatin1(argv[1]) == QStringLiteral("--reset")) {
+        if (argc < 3 || QString::fromLatin1(argv[2]) != QStringLiteral("--yes")) {
+            std::fprintf(stderr, "Refusing to reset without --yes. Usage: %s --reset --yes\n", argv[0]);
+            return 2;
+        }
+        QCoreApplication app(argc, argv);
+        return runCliReset();
     }
 
     return runGuiDemo(argc, argv);

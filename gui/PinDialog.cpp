@@ -2,10 +2,8 @@
 
 #include <QDialogButtonBox>
 #include <QFormLayout>
-#include <QLabel>
 #include <QLineEdit>
 #include <QMessageBox>
-#include <cstring>
 
 PinDialog::PinDialog(Mode mode, QWidget *parent)
     : QDialog(parent)

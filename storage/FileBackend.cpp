@@ -30,11 +30,6 @@ QString FileBackend::name() const
     return "file";
 }
 
-QString FileBackend::directory() const
-{
-    return directory_;
-}
-
 QString FileBackend::sanitizeKey(const QString &key)
 {
     // ファイル名として安全でない文字を置換

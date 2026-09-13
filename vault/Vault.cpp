@@ -197,3 +197,12 @@ bool Vault::changePin(const SecureBuffer &oldPin, const SecureBuffer &newPin)
     newKek.clear();
     return !newEmk.isEmpty() && backend_->store(emkKey_, newEmk);
 }
+
+bool Vault::reset(const SecureBuffer &newPin)
+{
+    if (!isAvailable() || newPin.empty()) return false;
+
+    lock();
+    if (isSetup() && !backend_->remove(emkKey_)) return false;
+    return setup(newPin);
+}

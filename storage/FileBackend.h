@@ -21,8 +21,6 @@ public:
     QByteArray load(const QString &key) override;
     bool remove(const QString &key) override;
 
-    QString directory() const;
-
 private:
     QString directory_;
 
