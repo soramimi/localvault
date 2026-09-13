@@ -13,19 +13,19 @@
  */
 class FileBackend : public ISecretStorageBackend {
 public:
-    explicit FileBackend(const QString &directory = QString());
+	explicit FileBackend(const QString &directory = QString());
 
-    bool isAvailable() const override;
-    QString name() const override;
-    bool store(const QString &key, const QByteArray &data) override;
-    QByteArray load(const QString &key) override;
-    bool remove(const QString &key) override;
+	bool isAvailable() const override;
+	QString name() const override;
+	bool store(const QString &key, const QByteArray &data) override;
+	QByteArray load(const QString &key) override;
+	bool remove(const QString &key) override;
 
 private:
-    QString directory_;
+	QString directory_;
 
-    QString filePathForKey(const QString &key) const;
-    static QString sanitizeKey(const QString &key);
+	QString filePathForKey(const QString &key) const;
+	static QString sanitizeKey(const QString &key);
 };
 
 #endif // FILEBACKEND_H

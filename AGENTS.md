@@ -31,14 +31,14 @@
 
 | ファイル | 内容 |
 |---|---|
-| `main.cpp` | 自己テスト用エントリーポイント、およびGUIデモ |
-| `vault/SecureBuffer.h/cpp` | libsodiumの安全な消去・メモリロックを使用する機密メモリコンテナ |
-| `vault/SecretStorage.h` | セキュアストレージバックエンド I/F（Phase 2 で追加） |
-| `vault/Vault.h/cpp` | Argon2id / XChaCha20-Poly1305を用いる2段階鍵体系Vaultコア |
-| `storage/FileBackend.h/cpp` | ファイルベースフォールバックバックエンド（Phase 2 で追加） |
-| `storage/SystemKeychainBackend.h/cpp` | OSセキュアストレージバックエンド（Phase 3 で追加） |
-| `gui/PinDialog.h/cpp` | PIN入力ダイアログ（Phase 4 で追加） |
-| `localvault.pro` | Qt qmake プロジェクトファイル。`QT += core widgets` |
+| `src/main.cpp` | 自己テスト用エントリーポイント、およびGUIデモ |
+| `src/vault/SecureBuffer.h/cpp` | libsodiumの安全な消去・メモリロックを使用する機密メモリコンテナ |
+| `src/vault/SecretStorage.h` | セキュアストレージバックエンド I/F（Phase 2 で追加） |
+| `src/vault/Vault.h/cpp` | Argon2id / XChaCha20-Poly1305を用いる2段階鍵体系Vaultコア |
+| `src/storage/FileBackend.h/cpp` | ファイルベースフォールバックバックエンド（Phase 2 で追加） |
+| `src/storage/SystemKeychainBackend.h/cpp` | OSセキュアストレージバックエンド（Phase 3 で追加） |
+| `src/gui/PinDialog.h/cpp` | PIN入力ダイアログ（Phase 4 で追加） |
+| `qmake/localvault.pro` | Qt qmake プロジェクトファイル。`QT += core widgets` |
 
 ### 実装済みフェーズ
 
@@ -90,7 +90,7 @@
 │ Core Vault Module (QtCore only)     │
 │  - SecureBuffer                     │
 │  - libsodium (Argon2id / AEAD)      │
-│  - SecureBuffer                     │
+│  - Vault                            │
 ├─────────────────────────────────────┤
 │ Storage Backends (QtCore only)      │
 │  - SystemKeychainBackend            │
@@ -184,20 +184,21 @@
 ```
 localvault/
 ├── AGENTS.md                           # 本ファイル
+├── README.md                           # ユーザー向けREADME
 ├── .gitignore
-├── localvault.pro                     # Qt qmake プロジェクト
-├── main.cpp                            # アプリエントリーポイント
-├── vault/                              # QtCore のみのVaultコア
-│   ├── SecureBuffer.h/cpp
-│   ├── Vault.h/cpp
-│   └── SecretStorage.h
-├── storage/                            # ストレージバックエンド
-│   ├── FileBackend.h/cpp               # Phase 2 で追加
-│   ├── SystemKeychainBackend.h/cpp     # Phase 3 で追加
-│   └── OnePasswordBackend.h/cpp        # 未実装
-├── gui/                                # GUIレイヤー（QtWidgets）
-│   └── PinDialog.h/cpp                 # Phase 4 で追加
-└── tests/                              # テスト（必要に応じて）
+├── qmake/
+│   └── localvault.pro                 # Qt qmake プロジェクト
+└── src/
+    ├── main.cpp                        # アプリエントリーポイント
+    ├── vault/                          # QtCore のみのVaultコア
+    │   ├── SecureBuffer.h/cpp
+    │   ├── Vault.h/cpp
+    │   └── SecretStorage.h
+    ├── storage/                        # ストレージバックエンド
+    │   ├── FileBackend.h/cpp           # Phase 2 で追加
+    │   └── SystemKeychainBackend.h/cpp # Phase 3 で追加
+    └── gui/                            # GUIレイヤー（QtWidgets）
+        └── PinDialog.h/cpp             # Phase 4 で追加
 ```
 
 ## ビルド手順
@@ -216,6 +217,7 @@ libsecret 等の開発ファイルが必要な場合があります。
 sudo apt-get install libsodium-dev libsecret-1-dev libglib2.0-dev
 
 # ビルド
+cd qmake
 qmake localvault.pro
 make
 
@@ -226,6 +228,7 @@ make
 ### macOS
 
 ```bash
+cd qmake
 qmake localvault.pro
 make
 ```
@@ -233,6 +236,7 @@ make
 ### Windows
 
 ```bash
+cd qmake
 qmake localvault.pro
 nmake  # または mingw32-make
 ```

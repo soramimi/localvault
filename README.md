@@ -59,17 +59,19 @@
 localvault/
 ├── AGENTS.md                    # エージェント向け詳細設計書
 ├── README.md                    # 本ファイル
-├── localvault.pro              # Qt qmake プロジェクト
-├── main.cpp                     # テストランナー / GUI デモ
-├── vault/                       # QtCore のみの Vault コア
-│   ├── SecureBuffer.h/cpp
-│   ├── Vault.h/cpp
-│   └── SecretStorage.h
-├── storage/                     # ストレージバックエンド
-│   ├── FileBackend.h/cpp
-│   └── SystemKeychainBackend.h/cpp
-└── gui/                         # GUI レイヤー（QtWidgets）
-    └── PinDialog.h/cpp
+├── qmake/
+│   └── localvault.pro          # Qt qmake プロジェクト
+└── src/
+    ├── main.cpp                 # テストランナー / GUI デモ
+    ├── vault/                   # QtCore のみの Vault コア
+    │   ├── SecureBuffer.h/cpp
+    │   ├── Vault.h/cpp
+    │   └── SecretStorage.h
+    ├── storage/                 # ストレージバックエンド
+    │   ├── FileBackend.h/cpp
+    │   └── SystemKeychainBackend.h/cpp
+    └── gui/                     # GUI レイヤー（QtWidgets）
+        └── PinDialog.h/cpp
 ```
 
 ## ビルド手順
@@ -87,6 +89,7 @@ localvault/
 sudo apt-get install libsodium-dev libsecret-1-dev libglib2.0-dev
 
 # ビルド
+cd qmake
 qmake localvault.pro
 make
 
@@ -103,6 +106,7 @@ make
 ### macOS
 
 ```bash
+cd qmake
 qmake localvault.pro
 make
 ```
@@ -110,6 +114,7 @@ make
 ### Windows
 
 ```bash
+cd qmake
 qmake localvault.pro
 nmake  # または mingw32-make
 ```

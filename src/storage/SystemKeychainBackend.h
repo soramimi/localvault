@@ -13,18 +13,18 @@
  */
 class SystemKeychainBackend : public ISecretStorageBackend {
 public:
-    SystemKeychainBackend();
-    ~SystemKeychainBackend() override;
+	SystemKeychainBackend();
+	~SystemKeychainBackend() override;
 
-    bool isAvailable() const override;
-    QString name() const override;
-    bool store(const QString &key, const QByteArray &data) override;
-    QByteArray load(const QString &key) override;
-    bool remove(const QString &key) override;
+	bool isAvailable() const override;
+	QString name() const override;
+	bool store(const QString &key, const QByteArray &data) override;
+	QByteArray load(const QString &key) override;
+	bool remove(const QString &key) override;
 
 private:
-    class Impl;
-    Impl *impl_;
+	class Impl;
+	Impl *impl_;
 };
 
 #endif // SYSTEMKEYCHAINBACKEND_H

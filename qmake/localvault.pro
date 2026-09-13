@@ -1,11 +1,20 @@
-DESTDIR = $$PWD
+DESTDIR = $$PWD/../_bin
 TEMPLATE = app
 TARGET = localvault
 QT += core widgets
 CONFIG += c++17
 CONFIG -= app_bundle
 CONFIG += link_pkgconfig
-PKGCONFIG += libsodium
+
+msvc:INCLUDEPATH += C:/vcpkg/installed/x64-windows/include
+msvc:CONFIG(debug,debug|release) {
+	msvc:LIBS += -LC:/vcpkg/installed/x64-windows/debug/lib
+}
+
+msvc:CONFIG(release,debug|release) {
+	msvc:LIBS += -LC:/vcpkg/installed/x64-windows/lib
+}
+
 
 HEADERS += \
 	../src/gui/PinDialog.h \
@@ -25,10 +34,11 @@ SOURCES += \
 
 linux {
 	PKGCONFIG += libsecret-1
+	PKGCONFIG += libsodium
 }
 macx {
 	LIBS += -framework Security -framework CoreFoundation
 }
 win32 {
-	LIBS += -lcrypt32
+	LIBS += -lcrypt32 -llibsodium
 }

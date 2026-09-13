@@ -9,3 +9,4 @@ example.encoded.bin
 localvault
 moc_*
 localvault-review.Makefile
+_bin/

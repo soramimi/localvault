@@ -14,48 +14,48 @@ class QLineEdit;
  * 入力はマスク表示される。
  */
 class PinDialog : public QDialog {
-    Q_OBJECT
+	Q_OBJECT
 
 public:
-    /**
-     * @brief ダイアログモード
-     */
-    enum class Mode {
-        Unlock, ///< 既存 Vault の解除
-        Setup   ///< 初回セットアップ（2回入力で確認）
-    };
+	/**
+	 * @brief ダイアログモード
+	 */
+	enum class Mode {
+		Unlock, ///< 既存 Vault の解除
+		Setup ///< 初回セットアップ（2回入力で確認）
+	};
 
-    explicit PinDialog(Mode mode, QWidget *parent = nullptr);
+	explicit PinDialog(Mode mode, QWidget *parent = nullptr);
 
-    /**
-     * @brief 入力された PIN を取得する
-     *
-     * 呼び出し側は返された SecureBuffer を適切に管理すること。
-     */
-    SecureBuffer pin() const;
+	/**
+	 * @brief 入力された PIN を取得する
+	 *
+	 * 呼び出し側は返された SecureBuffer を適切に管理すること。
+	 */
+	SecureBuffer pin() const;
 
-    /**
-     * @brief 解除用 PIN をユーザーに求める
-     * @param parent 親ウィジェット
-     * @param ok 入力されたかどうか
-     * @return 入力された PIN。キャンセル時は空
-     */
-    static SecureBuffer requestPin(QWidget *parent, bool *ok = nullptr);
+	/**
+	 * @brief 解除用 PIN をユーザーに求める
+	 * @param parent 親ウィジェット
+	 * @param ok 入力されたかどうか
+	 * @return 入力された PIN。キャンセル時は空
+	 */
+	static SecureBuffer requestPin(QWidget *parent, bool *ok = nullptr);
 
-    /**
-     * @brief セットアップ用の新規 PIN をユーザーに求める
-     * @param parent 親ウィジェット
-     * @param ok 入力されたかどうか
-     * @return 入力された PIN。キャンセル時は空
-     */
-    static SecureBuffer setupPin(QWidget *parent, bool *ok = nullptr);
+	/**
+	 * @brief セットアップ用の新規 PIN をユーザーに求める
+	 * @param parent 親ウィジェット
+	 * @param ok 入力されたかどうか
+	 * @return 入力された PIN。キャンセル時は空
+	 */
+	static SecureBuffer setupPin(QWidget *parent, bool *ok = nullptr);
 
 private:
-    Mode mode_;
-    QLineEdit *pinEdit_ = nullptr;
-    QLineEdit *confirmEdit_ = nullptr;
+	Mode mode_;
+	QLineEdit *pinEdit_ = nullptr;
+	QLineEdit *confirmEdit_ = nullptr;
 
-    void accept() override;
+	void accept() override;
 };
 
 #endif // PINDIALOG_H
