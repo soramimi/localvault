@@ -4,6 +4,8 @@ TARGET = obfuscation
 QT += core widgets
 CONFIG += c++17
 CONFIG -= app_bundle
+CONFIG += link_pkgconfig
+PKGCONFIG += libsodium
 
 HEADERS += \
 	gui/PinDialog.h \
@@ -28,7 +30,6 @@ SOURCES += \
 	main.cpp
 
 linux {
-	CONFIG += link_pkgconfig
 	PKGCONFIG += libsecret-1
 }
 macx {

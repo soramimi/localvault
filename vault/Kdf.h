@@ -24,7 +24,7 @@ public:
  */
 class Pbkdf2Sha256 : public Kdf {
 public:
-    explicit Pbkdf2Sha256(int iterations = 100000);
+    explicit Pbkdf2Sha256(int iterations = 600000);
 
     QByteArray name() const override;
     SecureBuffer derive(const SecureBuffer &password, const QByteArray &salt, int keyLen) const override;

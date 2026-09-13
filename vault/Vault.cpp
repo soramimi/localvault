@@ -1,38 +1,44 @@
 #include "Vault.h"
 
-#include "ChaCha20.h"
-#include "Kdf.h"
-#include "Mac.h"
-#include <QRandomGenerator>
-#include <QtGlobal>
-#include <algorithm>
-#include <cstring>
+#include <sodium.h>
 
-Vault::Vault(ISecretStorageBackend *backend, const QString &emkKey)
-    : backend_(backend)
-    , emkKey_(emkKey)
+namespace {
+constexpr char MAGIC[] = "VLT2";
+constexpr int MAGIC_SIZE = 4;
+constexpr quint8 EMK_RECORD = 1, DATA_RECORD = 2, XCHACHA20_POLY1305 = 1, ARGON2ID = 2;
+constexpr int SALT_SIZE = 16, NONCE_SIZE = 24, MK_SIZE = 32, TAG_SIZE = 16;
+constexpr int EMK_HEADER_SIZE = MAGIC_SIZE + 1 + 1 + 1 + 1 + 4 + 4 + 1 + SALT_SIZE;
+constexpr int DATA_HEADER_SIZE = MAGIC_SIZE + 1 + 1 + 1;
+constexpr quint32 MIN_ARGON2_OPSLIMIT = 3, MAX_ARGON2_OPSLIMIT = 10;
+constexpr quint32 MIN_ARGON2_MEMLIMIT = 64 * 1024 * 1024, MAX_ARGON2_MEMLIMIT = 1024 * 1024 * 1024;
+
+bool sodiumReady()
 {
+    static const bool ready = sodium_init() >= 0;
+    return ready;
 }
 
-Vault::~Vault()
+void appendU32(QByteArray &out, quint32 value)
 {
-    lock();
+    out.append(static_cast<char>((value >> 24) & 0xff));
+    out.append(static_cast<char>((value >> 16) & 0xff));
+    out.append(static_cast<char>((value >> 8) & 0xff));
+    out.append(static_cast<char>(value & 0xff));
 }
 
-bool Vault::isAvailable() const
+quint32 readU32(const QByteArray &in, int offset)
 {
-    return backend_ && backend_->isAvailable();
+    const auto *p = reinterpret_cast<const unsigned char *>(in.constData() + offset);
+    return (static_cast<quint32>(p[0]) << 24) | (static_cast<quint32>(p[1]) << 16)
+        | (static_cast<quint32>(p[2]) << 8) | p[3];
+}
 }
 
-bool Vault::isSetup() const
-{
-    return backend_ && !backend_->load(emkKey_).isEmpty();
-}
-
-bool Vault::isUnlocked() const
-{
-    return unlocked_ && mk_.size() == MK_SIZE;
-}
+Vault::Vault(ISecretStorageBackend *backend, const QString &emkKey) : backend_(backend), emkKey_(emkKey) {}
+Vault::~Vault() { lock(); }
+bool Vault::isAvailable() const { return backend_ && backend_->isAvailable() && sodiumReady(); }
+bool Vault::isSetup() const { return backend_ && !backend_->load(emkKey_).isEmpty(); }
+bool Vault::isUnlocked() const { return unlocked_ && mk_.size() == MK_SIZE; }
 
 void Vault::lock()
 {
@@ -40,279 +46,154 @@ void Vault::lock()
     unlocked_ = false;
 }
 
-SecureBuffer Vault::deriveKek(const SecureBuffer &pin, const QByteArray &salt) const
+SecureBuffer Vault::deriveKek(const SecureBuffer &pin, const QByteArray &salt, quint32 opsLimit, quint32 memLimit) const
 {
-    Pbkdf2Sha256 kdf(100000);
-    return kdf.derive(pin, salt, MK_SIZE);
+    if (pin.empty() || salt.size() != crypto_pwhash_SALTBYTES || opsLimit < MIN_ARGON2_OPSLIMIT
+        || opsLimit > MAX_ARGON2_OPSLIMIT || memLimit < MIN_ARGON2_MEMLIMIT || memLimit > MAX_ARGON2_MEMLIMIT) return {};
+    SecureBuffer kek(MK_SIZE);
+    if (crypto_pwhash(kek.data(), kek.size(), reinterpret_cast<const char *>(pin.data()), pin.size(),
+            reinterpret_cast<const unsigned char *>(salt.constData()), opsLimit, memLimit,
+            crypto_pwhash_ALG_ARGON2ID13) != 0 || !kek.lock()) {
+        kek.clear();
+    }
+    return kek;
 }
 
 QByteArray Vault::generateRandom(int length) const
 {
-    QByteArray out(length, 0);
-    uint8_t *p = reinterpret_cast<uint8_t *>(out.data());
-    int i = 0;
-    while (i < length) {
-        quint32 value = QRandomGenerator::system()->generate();
-        int chunk = std::min(length - i, static_cast<int>(sizeof(quint32)));
-        memcpy(p + i, &value, chunk);
-        i += chunk;
-    }
+    if (!sodiumReady() || length < 0) return {};
+    QByteArray out(length, Qt::Uninitialized);
+    randombytes_buf(out.data(), static_cast<size_t>(out.size()));
     return out;
 }
 
-QByteArray Vault::buildEmk(const SecureBuffer &mk, const SecureBuffer &kek, const QByteArray &salt, const QByteArray &nonce)
+QByteArray Vault::buildEmk(const SecureBuffer &mk, const SecureBuffer &kek, const QByteArray &salt)
 {
-    QByteArray encryptedMk(MK_SIZE, 0);
-    ChaCha20 chacha(
-        reinterpret_cast<const uint8_t *>(kek.data()),
-        reinterpret_cast<const uint8_t *>(nonce.constData())
-    );
-    chacha.crypt(
-        reinterpret_cast<const uint8_t *>(mk.data()),
-        reinterpret_cast<uint8_t *>(encryptedMk.data()),
-        MK_SIZE
-    );
-
-    QByteArray blob;
-    blob.reserve(1 + SALT_SIZE + NONCE_SIZE + encryptedMk.size() + TAG_SIZE);
-    blob.append(static_cast<char>(VERSION));
-    blob.append(salt);
-    blob.append(nonce);
-    blob.append(encryptedMk);
-
-    HmacSha256 hmac;
-    QByteArray tag = hmac.compute(kek, blob);
-    blob.append(tag);
-
-    return blob;
+    if (!sodiumReady() || mk.size() != MK_SIZE || kek.size() != MK_SIZE || salt.size() != SALT_SIZE) return {};
+    QByteArray header(MAGIC, MAGIC_SIZE);
+    header.append(static_cast<char>(VERSION));
+    header.append(static_cast<char>(EMK_RECORD));
+    header.append(static_cast<char>(XCHACHA20_POLY1305));
+    header.append(static_cast<char>(ARGON2ID));
+    appendU32(header, ARGON2_OPSLIMIT);
+    appendU32(header, ARGON2_MEMLIMIT);
+    header.append(static_cast<char>(SALT_SIZE));
+    header.append(salt);
+    const QByteArray nonce = generateRandom(NONCE_SIZE);
+    QByteArray encrypted(MK_SIZE + TAG_SIZE, Qt::Uninitialized);
+    unsigned long long encryptedLen = 0;
+    if (crypto_aead_xchacha20poly1305_ietf_encrypt(reinterpret_cast<unsigned char *>(encrypted.data()), &encryptedLen,
+            mk.data(), MK_SIZE, reinterpret_cast<const unsigned char *>(header.constData()), header.size(), nullptr,
+            reinterpret_cast<const unsigned char *>(nonce.constData()), kek.data()) != 0) return {};
+    encrypted.resize(static_cast<int>(encryptedLen));
+    return header + nonce + encrypted;
 }
 
-bool Vault::parseEmk(const QByteArray &emk, const SecureBuffer &kek, SecureBuffer &mk)
+bool Vault::parseEmk(const QByteArray &emk, const SecureBuffer &pin, SecureBuffer &mk)
 {
-    const int expectedSize = 1 + SALT_SIZE + NONCE_SIZE + MK_SIZE + TAG_SIZE;
-    if (emk.size() != expectedSize) {
-        return false;
-    }
-
-    if (static_cast<uint8_t>(emk[0]) != VERSION) {
-        return false;
-    }
-
-    QByteArray blob = emk.left(expectedSize - TAG_SIZE);
-    QByteArray tag = emk.right(TAG_SIZE);
-
-    HmacSha256 hmac;
-    QByteArray expectedTag = hmac.compute(kek, blob);
-    if (!std::equal(tag.begin(), tag.end(), expectedTag.begin())) {
-        return false;
-    }
-
-    QByteArray salt = emk.mid(1, SALT_SIZE);
-    QByteArray nonce = emk.mid(1 + SALT_SIZE, NONCE_SIZE);
-    QByteArray encryptedMk = emk.mid(1 + SALT_SIZE + NONCE_SIZE, MK_SIZE);
-
-    Q_UNUSED(salt)
-
-    mk = SecureBuffer(MK_SIZE);
-    ChaCha20 chacha(
-        reinterpret_cast<const uint8_t *>(kek.data()),
-        reinterpret_cast<const uint8_t *>(nonce.constData())
-    );
-    chacha.crypt(
-        reinterpret_cast<const uint8_t *>(encryptedMk.constData()),
-        mk.data(),
-        MK_SIZE
-    );
-
+    if (!sodiumReady() || emk.size() != EMK_HEADER_SIZE + NONCE_SIZE + MK_SIZE + TAG_SIZE
+        || !emk.startsWith(QByteArray(MAGIC, MAGIC_SIZE)) || static_cast<quint8>(emk[MAGIC_SIZE]) != VERSION
+        || static_cast<quint8>(emk[MAGIC_SIZE + 1]) != EMK_RECORD || static_cast<quint8>(emk[MAGIC_SIZE + 2]) != XCHACHA20_POLY1305
+        || static_cast<quint8>(emk[MAGIC_SIZE + 3]) != ARGON2ID || static_cast<quint8>(emk[MAGIC_SIZE + 12]) != SALT_SIZE) return false;
+    const QByteArray salt = emk.mid(MAGIC_SIZE + 13, SALT_SIZE);
+    SecureBuffer kek = deriveKek(pin, salt, readU32(emk, MAGIC_SIZE + 4), readU32(emk, MAGIC_SIZE + 8));
+    if (kek.empty()) return false;
+    const QByteArray header = emk.left(EMK_HEADER_SIZE);
+    const QByteArray nonce = emk.mid(EMK_HEADER_SIZE, NONCE_SIZE);
+    const QByteArray encrypted = emk.mid(EMK_HEADER_SIZE + NONCE_SIZE);
+    SecureBuffer result(MK_SIZE);
+    unsigned long long resultLen = 0;
+    const int rc = crypto_aead_xchacha20poly1305_ietf_decrypt(result.data(), &resultLen, nullptr,
+        reinterpret_cast<const unsigned char *>(encrypted.constData()), encrypted.size(),
+        reinterpret_cast<const unsigned char *>(header.constData()), header.size(),
+        reinterpret_cast<const unsigned char *>(nonce.constData()), kek.data());
+    kek.clear();
+    if (rc != 0 || resultLen != MK_SIZE || !result.lock()) { result.clear(); return false; }
+    mk = std::move(result);
     return true;
 }
 
 bool Vault::setup(const SecureBuffer &pin)
 {
-    if (!isAvailable()) {
-        return false;
-    }
-
-    QByteArray salt = generateRandom(SALT_SIZE);
-    QByteArray nonce = generateRandom(NONCE_SIZE);
-
-    SecureBuffer kek = deriveKek(pin, salt);
-
-    mk_ = SecureBuffer(MK_SIZE);
-    QByteArray randomMk = generateRandom(MK_SIZE);
-    memcpy(mk_.data(), randomMk.constData(), MK_SIZE);
-    randomMk.fill(0);
-
-    QByteArray emk = buildEmk(mk_, kek, salt, nonce);
-
+    if (!isAvailable() || pin.empty() || isSetup()) return false;
+    const QByteArray salt = generateRandom(SALT_SIZE);
+    SecureBuffer kek = deriveKek(pin, salt, ARGON2_OPSLIMIT, ARGON2_MEMLIMIT);
+    SecureBuffer master(MK_SIZE);
+    if (kek.empty() || !master.lock()) return false;
+    randombytes_buf(master.data(), MK_SIZE);
+    const QByteArray emk = buildEmk(master, kek, salt);
     kek.clear();
-
-    if (!backend_->store(emkKey_, emk)) {
-        lock();
-        return false;
-    }
-
+    if (emk.isEmpty() || !backend_->store(emkKey_, emk)) return false;
+    mk_ = std::move(master);
     unlocked_ = true;
     return true;
 }
 
 bool Vault::unlock(const SecureBuffer &pin)
 {
-    if (!isAvailable()) {
-        return false;
-    }
-
-    QByteArray emk = backend_->load(emkKey_);
-    if (emk.isEmpty()) {
-        return false;
-    }
-
-    if (emk.size() < 1 + SALT_SIZE + NONCE_SIZE) {
-        return false;
-    }
-
-    QByteArray salt = emk.mid(1, SALT_SIZE);
-    SecureBuffer kek = deriveKek(pin, salt);
-
-    SecureBuffer mk;
-    if (!parseEmk(emk, kek, mk)) {
-        kek.clear();
-        return false;
-    }
-
-    kek.clear();
-    mk_ = std::move(mk);
+    if (!isAvailable() || pin.empty()) return false;
+    SecureBuffer master;
+    if (!parseEmk(backend_->load(emkKey_), pin, master)) return false;
+    lock();
+    mk_ = std::move(master);
     unlocked_ = true;
     return true;
 }
 
 QByteArray Vault::encrypt(const QByteArray &plain)
 {
-    if (!isUnlocked()) {
-        return QByteArray();
-    }
-    return encryptWithMk(plain);
+    if (!isUnlocked() || !sodiumReady()) return {};
+    QByteArray header(MAGIC, MAGIC_SIZE);
+    header.append(static_cast<char>(VERSION));
+    header.append(static_cast<char>(DATA_RECORD));
+    header.append(static_cast<char>(XCHACHA20_POLY1305));
+    const QByteArray nonce = generateRandom(NONCE_SIZE);
+    QByteArray encrypted(plain.size() + TAG_SIZE, Qt::Uninitialized);
+    unsigned long long encryptedLen = 0;
+    if (crypto_aead_xchacha20poly1305_ietf_encrypt(reinterpret_cast<unsigned char *>(encrypted.data()), &encryptedLen,
+            reinterpret_cast<const unsigned char *>(plain.constData()), plain.size(),
+            reinterpret_cast<const unsigned char *>(header.constData()), header.size(), nullptr,
+            reinterpret_cast<const unsigned char *>(nonce.constData()), mk_.data()) != 0) return {};
+    encrypted.resize(static_cast<int>(encryptedLen));
+    return header + nonce + encrypted;
+}
+
+SecureBuffer Vault::decryptToSecureBuffer(const QByteArray &cipher)
+{
+    if (!isUnlocked() || !sodiumReady() || cipher.size() < DATA_HEADER_SIZE + NONCE_SIZE + TAG_SIZE
+        || !cipher.startsWith(QByteArray(MAGIC, MAGIC_SIZE)) || static_cast<quint8>(cipher[MAGIC_SIZE]) != VERSION
+        || static_cast<quint8>(cipher[MAGIC_SIZE + 1]) != DATA_RECORD || static_cast<quint8>(cipher[MAGIC_SIZE + 2]) != XCHACHA20_POLY1305) return {};
+    const QByteArray header = cipher.left(DATA_HEADER_SIZE);
+    const QByteArray nonce = cipher.mid(DATA_HEADER_SIZE, NONCE_SIZE);
+    const QByteArray encrypted = cipher.mid(DATA_HEADER_SIZE + NONCE_SIZE);
+    SecureBuffer plain(static_cast<size_t>(encrypted.size() - TAG_SIZE));
+    unsigned long long plainLen = 0;
+    if (crypto_aead_xchacha20poly1305_ietf_decrypt(plain.data(), &plainLen, nullptr,
+            reinterpret_cast<const unsigned char *>(encrypted.constData()), encrypted.size(),
+            reinterpret_cast<const unsigned char *>(header.constData()), header.size(),
+            reinterpret_cast<const unsigned char *>(nonce.constData()), mk_.data()) != 0
+        || !plain.resize(static_cast<size_t>(plainLen)) || !plain.lock()) { plain.clear(); return {}; }
+    return plain;
 }
 
 QByteArray Vault::decrypt(const QByteArray &cipher)
 {
-    if (!isUnlocked()) {
-        return QByteArray();
-    }
-    QByteArray plain;
-    if (!decryptWithMk(cipher, plain)) {
-        return QByteArray();
-    }
-    return plain;
+    SecureBuffer plain = decryptToSecureBuffer(cipher);
+    if (plain.empty()) return {};
+    QByteArray result(reinterpret_cast<const char *>(plain.data()), static_cast<int>(plain.size()));
+    plain.clear();
+    return result;
 }
 
 bool Vault::changePin(const SecureBuffer &oldPin, const SecureBuffer &newPin)
 {
-    if (!isUnlocked()) {
-        return false;
-    }
-
-    QByteArray emk = backend_->load(emkKey_);
-    if (emk.isEmpty()) {
-        return false;
-    }
-
-    QByteArray salt = emk.mid(1, SALT_SIZE);
-    SecureBuffer oldKek = deriveKek(oldPin, salt);
-
-    SecureBuffer mk;
-    if (!parseEmk(emk, oldKek, mk)) {
-        oldKek.clear();
-        return false;
-    }
-    oldKek.clear();
-
-    QByteArray newSalt = generateRandom(SALT_SIZE);
-    QByteArray newNonce = generateRandom(NONCE_SIZE);
-    SecureBuffer newKek = deriveKek(newPin, newSalt);
-
-    QByteArray newEmk = buildEmk(mk, newKek, newSalt, newNonce);
+    if (!isUnlocked() || newPin.empty()) return false;
+    SecureBuffer verifiedMaster;
+    if (!parseEmk(backend_->load(emkKey_), oldPin, verifiedMaster)) return false;
+    const QByteArray salt = generateRandom(SALT_SIZE);
+    SecureBuffer newKek = deriveKek(newPin, salt, ARGON2_OPSLIMIT, ARGON2_MEMLIMIT);
+    const QByteArray newEmk = buildEmk(verifiedMaster, newKek, salt);
+    verifiedMaster.clear();
     newKek.clear();
-    mk.clear();
-
-    if (!backend_->store(emkKey_, newEmk)) {
-        return false;
-    }
-
-    // メモリ上の MK は維持されたまま
-    return true;
+    return !newEmk.isEmpty() && backend_->store(emkKey_, newEmk);
 }
-
-QByteArray Vault::encryptWithMk(const QByteArray &plain)
-{
-    QByteArray nonce = generateRandom(NONCE_SIZE);
-    QByteArray cipher(plain.size(), 0);
-
-    ChaCha20 chacha(
-        reinterpret_cast<const uint8_t *>(mk_.data()),
-        reinterpret_cast<const uint8_t *>(nonce.constData())
-    );
-    chacha.crypt(
-        reinterpret_cast<const uint8_t *>(plain.constData()),
-        reinterpret_cast<uint8_t *>(cipher.data()),
-        static_cast<size_t>(plain.size())
-    );
-
-    QByteArray blob;
-    blob.reserve(1 + NONCE_SIZE + cipher.size() + TAG_SIZE);
-    blob.append(static_cast<char>(VERSION));
-    blob.append(nonce);
-    blob.append(cipher);
-
-    HmacSha256 hmac;
-    SecureBuffer mkCopy;
-    mkCopy.assign(mk_.data(), mk_.size());
-    QByteArray tag = hmac.compute(mkCopy, blob);
-    mkCopy.clear();
-    blob.append(tag);
-
-    return blob;
-}
-
-bool Vault::decryptWithMk(const QByteArray &cipher, QByteArray &plain)
-{
-    const int minSize = 1 + NONCE_SIZE + TAG_SIZE;
-    if (cipher.size() < minSize) {
-        return false;
-    }
-
-    if (static_cast<uint8_t>(cipher[0]) != VERSION) {
-        return false;
-    }
-
-    int payloadSize = cipher.size() - minSize;
-    QByteArray blob = cipher.left(1 + NONCE_SIZE + payloadSize);
-    QByteArray tag = cipher.right(TAG_SIZE);
-
-    HmacSha256 hmac;
-    SecureBuffer mkCopy;
-    mkCopy.assign(mk_.data(), mk_.size());
-    QByteArray expectedTag = hmac.compute(mkCopy, blob);
-    mkCopy.clear();
-
-    if (!std::equal(tag.begin(), tag.end(), expectedTag.begin())) {
-        return false;
-    }
-
-    QByteArray nonce = cipher.mid(1, NONCE_SIZE);
-    QByteArray encrypted = cipher.mid(1 + NONCE_SIZE, payloadSize);
-
-    plain.resize(payloadSize);
-    ChaCha20 chacha(
-        reinterpret_cast<const uint8_t *>(mk_.data()),
-        reinterpret_cast<const uint8_t *>(nonce.constData())
-    );
-    chacha.crypt(
-        reinterpret_cast<const uint8_t *>(encrypted.constData()),
-        reinterpret_cast<uint8_t *>(plain.data()),
-        static_cast<size_t>(payloadSize)
-    );
-
-    return true;
-}
-

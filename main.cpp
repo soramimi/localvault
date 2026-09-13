@@ -52,9 +52,9 @@ static void testSecureBuffer()
     check(buf.size() == 32, "SecureBuffer size");
 
     std::fill(buf.begin(), buf.end(), 0xab);
+    check(buf.lock(), "SecureBuffer locks memory");
+    check(!buf.resize(64), "SecureBuffer rejects resize while locked");
     buf.clear();
-    bool allZero = std::all_of(buf.begin(), buf.end(), [](uint8_t v) { return v == 0; });
-    check(allZero, "SecureBuffer clear zeros memory");
     check(buf.empty(), "SecureBuffer empty after clear");
 }
 
@@ -143,6 +143,11 @@ static void testVaultSetupUnlock()
     QByteArray decrypted = vault.decrypt(encrypted);
     check(decrypted == secret, "Vault decrypt");
 
+    SecureBuffer secureDecrypted = vault.decryptToSecureBuffer(encrypted);
+    check(secureDecrypted.size() == static_cast<size_t>(secret.size())
+              && QByteArray(reinterpret_cast<const char *>(secureDecrypted.data()), static_cast<int>(secureDecrypted.size())) == secret,
+          "Vault decrypts to SecureBuffer");
+
     vault.lock();
     check(!vault.isUnlocked(), "Vault locked");
     check(vault.decrypt(encrypted).isEmpty(), "Vault decrypt fails when locked");
@@ -160,6 +165,7 @@ static void testVaultWrongPin()
 
     SecureBuffer pin = pinFromUtf8("correct");
     check(vault.setup(pin), "Vault setup for wrong PIN test");
+    check(!vault.setup(pin), "Vault refuses to overwrite existing setup");
 
     SecureBuffer wrongPin = pinFromUtf8("wrong");
     check(!vault.unlock(wrongPin), "Vault unlock with wrong PIN fails");

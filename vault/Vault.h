@@ -55,17 +55,22 @@ public:
      */
     QByteArray decrypt(const QByteArray &cipher);
 
+    /** Preferred decryption API: avoids placing the result in QByteArray. */
+    SecureBuffer decryptToSecureBuffer(const QByteArray &cipher);
+
     /**
      * @brief PIN を変更する
      */
     bool changePin(const SecureBuffer &oldPin, const SecureBuffer &newPin);
 
 private:
-    static constexpr int VERSION = 1;
+    static constexpr int VERSION = 2;
     static constexpr int SALT_SIZE = 16;
-    static constexpr int NONCE_SIZE = 12;
+    static constexpr int NONCE_SIZE = 24;
     static constexpr int MK_SIZE = 32;
-    static constexpr int TAG_SIZE = 32;
+    static constexpr int TAG_SIZE = 16;
+    static constexpr quint32 ARGON2_OPSLIMIT = 3;
+    static constexpr quint32 ARGON2_MEMLIMIT = 64 * 1024 * 1024;
 
     ISecretStorageBackend *backend_;
     QString emkKey_;
@@ -73,14 +78,11 @@ private:
     bool unlocked_ = false;
 
     bool hasEmk() const;
-    SecureBuffer deriveKek(const SecureBuffer &pin, const QByteArray &salt) const;
+    SecureBuffer deriveKek(const SecureBuffer &pin, const QByteArray &salt, quint32 opsLimit, quint32 memLimit) const;
 
     QByteArray generateRandom(int length) const;
-    QByteArray buildEmk(const SecureBuffer &mk, const SecureBuffer &kek, const QByteArray &salt, const QByteArray &nonce);
-    bool parseEmk(const QByteArray &emk, const SecureBuffer &kek, SecureBuffer &mk);
-
-    QByteArray encryptWithMk(const QByteArray &plain);
-    bool decryptWithMk(const QByteArray &cipher, QByteArray &plain);
+    QByteArray buildEmk(const SecureBuffer &mk, const SecureBuffer &kek, const QByteArray &salt);
+    bool parseEmk(const QByteArray &emk, const SecureBuffer &pin, SecureBuffer &mk);
 
 };
 

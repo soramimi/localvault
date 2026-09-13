@@ -2,7 +2,7 @@
 
 ローカルデスクトップGUIアプリケーション向けの、APIキー等の機密情報を安全に管理するための実装サンプルです。
 
-単純な難読化（XOR + 固定シード）から脱却し、ChaCha20 / HMAC-SHA256 / PBKDF2-SHA256 を用いた暗号化ベースの Vault 機能へ移行・拡張したものです。
+単純な難読化（XOR + 固定シード）から脱却し、libsodium の XChaCha20-Poly1305 AEAD と Argon2id を用いた暗号化ベースの Vault 機能へ移行・拡張したものです。
 
 ## 目的
 
@@ -16,22 +16,22 @@
 ### 2段階鍵体系
 
 ```
-┌─────────┐     KDF      ┌─────┐
-│   PIN   │ ───────────> │ KEK │
-└─────────┘  + salt      └─────┘
-                             │
-┌─────────┐  ChaCha20+MAC   ▼
-│    MK   │ <───────────  EMK
-│(random) │               (secure storage)
+┌─────────┐  Argon2id + salt  ┌─────┐
+│   PIN   │ ─────────────────> │ KEK │
+└─────────┘                    └─────┘
+                                   │
+┌─────────┐ XChaCha20-Poly1305    ▼
+│    MK   │ <──────────────────  EMK
+│(random) │                    (secure storage)
 └────┬────┘
-     │ ChaCha20+MAC
+     │ XChaCha20-Poly1305
      ▼
 [encrypted data file]
 ```
 
 - **MK（Master Key）**: ランダム 256bit。実際の機密データを暗号化
-- **KEK（Key Encryption Key）**: PIN から PBKDF2-SHA256 で導出
-- **EMK（Encrypted Master Key）**: KEK で暗号化された MK。セキュアストレージバックエンドに保存
+- **KEK（Key Encryption Key）**: PIN からArgon2idで導出（opslimit 3、memlimit 64 MiB）
+- **EMK（Encrypted Master Key）**: KEK で XChaCha20-Poly1305 により認証付き暗号化された MK。セキュアストレージバックエンドに保存
 - PIN 変更時は EMK のみ再暗号化すればよく、全データの再暗号化は不要
 
 ### レイヤー構成
@@ -45,7 +45,7 @@
 │  - Vault API                          │
 ├─────────────────────────────────────┤
 │ Core Vault Module (QtCore only)     │
-│  - SecureBuffer, ChaCha20, Kdf, Mac   │
+│  - SecureBuffer, libsodium             │
 ├─────────────────────────────────────┤
 │ Storage Backends (QtCore only)      │
 │  - SystemKeychainBackend              │
@@ -80,13 +80,14 @@ obfuscation/
 ### 前提
 
 - Qt 5.12 以上、または Qt 6
+- libsodium の開発ファイル
 - Linux では libsecret / glib の開発ファイル
 
 ### Linux
 
 ```bash
 # Ubuntu/Debian の例
-sudo apt-get install libsecret-1-dev libglib2.0-dev
+sudo apt-get install libsodium-dev libsecret-1-dev libglib2.0-dev
 
 # ビルド
 qmake obfuscation.pro
@@ -117,7 +118,7 @@ nmake  # または mingw32-make
 
 ### SecureBuffer
 
-機密データを保持するセキュアメモリコンテナ。解放時に確実にゼロクリアし、可能であればメモリロックを行う。
+機密データを保持するコンテナ。libsodiumで解放時にゼロクリアし、可能であればメモリロックを行う。ロック中は再配置を招く`resize`、`assign`、`append`を拒否する。
 
 ```cpp
 #include "vault/SecureBuffer.h"
@@ -129,7 +130,11 @@ buf.lock();                                    // スワップ防止（可能な
 buf.clear();                                   // 明示的に消去
 ```
 
-### ChaCha20
+### 旧プリミティブ
+
+`ChaCha20`、`Kdf`、`Mac`は既存の実験・互換用コードであり、Vaultは使用しない。新規の機密データ保存では、Vaultを通じたArgon2idとXChaCha20-Poly1305のみを使用する。
+
+### ChaCha20（Vaultでは未使用）
 
 RFC 8439 準拠のストリーム暗号。デフォルトコンストラクタでは CSPRNG として動作する。
 
@@ -155,7 +160,7 @@ dec.crypt(reinterpret_cast<const uint8_t *>(cipher.constData()),
           plain.size());
 ```
 
-### Kdf / Mac
+### Kdf / Mac（Vaultでは未使用）
 
 ```cpp
 #include "vault/Kdf.h"
@@ -164,8 +169,8 @@ dec.crypt(reinterpret_cast<const uint8_t *>(cipher.constData()),
 SecureBuffer password;
 password.assign("password", 8);
 
-// PBKDF2-SHA256 で 32 バイト導出
-Pbkdf2Sha256 kdf(100000);
+// PBKDF2-SHA256 で 32 バイト導出（実験・互換用途のみ）
+Pbkdf2Sha256 kdf(600000);
 SecureBuffer key = kdf.derive(password, "salt", 32);
 
 // HMAC-SHA256
@@ -207,7 +212,7 @@ vault.unlock(pin);
 // 機密データの暗号化/復号
 QByteArray secret = "API_KEY=sk-1234567890";
 QByteArray encrypted = vault.encrypt(secret);
-QByteArray decrypted = vault.decrypt(encrypted);
+SecureBuffer decrypted = vault.decryptToSecureBuffer(encrypted);
 
 // PIN 変更
 SecureBuffer newPin;
@@ -238,6 +243,12 @@ if (ok) {
     vault.unlock(pin);
 }
 ```
+
+## 形式と互換性
+
+EMK と暗号文には、magic、形式バージョン、レコード種別、暗号方式、KDF方式・計算/メモリコスト（EMKのみ）を含め、ヘッダ全体をAEADの追加認証データとして保護する。現行形式は `VLT2` / version 2 である。
+
+初期の試作版（ChaCha20 + HMAC、version 1）のEMKおよび暗号文とは互換性がない。試作版のデータを利用している場合は、その版で復号してから本版で再セットアップ・再暗号化すること。新規の`setup()`は既存EMKを上書きしない。
 
 ### バックエンドの直接利用
 
@@ -314,7 +325,8 @@ if (backend.isAvailable()) {
 ## セキュリティ上の注意
 
 - 本実装はあくまで実験・サンプルコードです。本番利用の前にセキュリティレビューを行ってください。
-- PIN は短いため、KEK 導出には十分なイテレーション数（最低 100,000 回以上）を設定しています。
+- KEKはArgon2id（opslimit 3、memlimit 64 MiB）で導出します。コストはEMKに格納され、受入値には上限があります。
+- 新規コードでは`decrypt()`ではなく、平文を通常メモリへコピーしない`decryptToSecureBuffer()`を使用してください。
 - `FileBackend` は OS セキュアストレージが使えない場合の最後の手段として位置づけてください。
 - 復号後の機密情報は `SecureBuffer` で管理し、使用後は即座に消去してください。
 - 可能な限りメモリロック（`mlock` / `VirtualLock`）を利用し、スワップファイルへの漏洩を防いでください。

@@ -20,9 +20,10 @@
 - APIキー管理機能の Qt 依存: `QtCore` のみ
   - `QByteArray`, `QCryptographicHash`, `QFile`, `QSaveFile` 等は使用可能
   - `QtGui`, `QtWidgets` への依存は GUI レイヤーに限定
-- 暗号化アルゴリズム: ChaCha20（既存ソースを拡張して使用）
-- 鍵導出: PBKDF2-SHA256（QtCore のみで実装）
-- メッセージ認証: HMAC-SHA256（QtCore のみで実装）
+- 暗号化アルゴリズム: libsodium の XChaCha20-Poly1305（AEAD）
+- 鍵導出: libsodium の Argon2id（opslimit 3、memlimit 64 MiB）
+- 乱数・安全な消去・メモリロック: libsodium
+- `vault/ChaCha20`、`Kdf`、`Mac` は互換・実験用のプリミティブとして残るが、Vaultの新規実装では使用しない
 - 対象プラットフォーム: Linux, macOS, Windows（マルチプラットフォーム対応）
 
 ## 現状のコード
@@ -31,16 +32,15 @@
 
 | ファイル | 内容 |
 |---|---|
-| `main.cpp` | Phase 1/2 のテスト用エントリーポイント |
+| `main.cpp` | 自己テスト用エントリーポイント、およびGUIデモ |
 | `obfuscation.h/cpp` | 旧難読化モジュール（XOR + 固定シード）。現状はビルドから除外 |
 | `crc32.h` | CRC32 チェックサム実装（旧モジュールで使用）。現状は未使用 |
-| `vault/ChaCha20.h/cpp` | ChaCha20 ストリーム暗号 / CSPRNG（Phase 1 で拡張済み） |
-| `vault/SecureBuffer.h/cpp` | セキュアメモリコンテナ（Phase 1 で追加） |
-| `vault/Kdf.h/cpp` | PBKDF2-SHA256（Phase 1 で追加） |
-| `vault/Mac.h/cpp` | HMAC-SHA256（Phase 1 で追加） |
+| `vault/ChaCha20.h/cpp` | 旧・実験用のChaCha20ストリーム暗号。Vaultには使用しない |
+| `vault/SecureBuffer.h/cpp` | libsodiumの安全な消去・メモリロックを使用する機密メモリコンテナ |
+| `vault/Kdf.h/cpp` | 旧・実験用のPBKDF2-SHA256 |
+| `vault/Mac.h/cpp` | 旧・実験用のHMAC-SHA256 |
 | `vault/SecretStorage.h` | セキュアストレージバックエンド I/F（Phase 2 で追加） |
-| `vault/Vault.h/cpp` | 2段階鍵体系 Vault コア（Phase 2 で追加） |
-| `vault/SecretStorage.h` | セキュアストレージバックエンド I/F（Phase 2 で追加） |
+| `vault/Vault.h/cpp` | Argon2id / XChaCha20-Poly1305を用いる2段階鍵体系Vaultコア |
 | `storage/FileBackend.h/cpp` | ファイルベースフォールバックバックエンド（Phase 2 で追加） |
 | `storage/SystemKeychainBackend.h/cpp` | OSセキュアストレージバックエンド（Phase 3 で追加） |
 | `gui/PinDialog.h/cpp` | PIN入力ダイアログ（Phase 4 で追加） |
@@ -52,6 +52,7 @@
 - **Phase 2**: Vault コア + FileBackend
 - **Phase 3**: SystemKeychainBackend（Linux libsecret / macOS Keychain / Windows DPAPI）
 - **Phase 4**: PIN 入力ダイアログ + GUI デモ統合
+- **Phase 5**: libsodiumを導入し、Argon2id / XChaCha20-Poly1305へ移行。EMK形式のバージョン化、`decryptToSecureBuffer()`、ロック済みバッファの再配置防止を追加
 
 ### 既知の課題
 
@@ -63,22 +64,22 @@
 ### 鍵体系
 
 ```
-┌─────────┐     KDF      ┌─────┐
-│   PIN   │ ───────────> │ KEK │
-└─────────┘  + salt      └─────┘
-                             │
-┌─────────┐  ChaCha20+MAC   ▼
-│    MK   │ <───────────  EMK
-│(random) │               (secure storage)
+┌─────────┐  Argon2id + salt  ┌─────┐
+│   PIN   │ ─────────────────> │ KEK │
+└─────────┘                    └─────┘
+                                   │
+┌─────────┐ XChaCha20-Poly1305    ▼
+│    MK   │ <──────────────────  EMK
+│(random) │                    (secure storage)
 └────┬────┘
-     │ ChaCha20+MAC
+     │ XChaCha20-Poly1305
      ▼
 [encrypted data file]
 ```
 
 - **MK（Master Key）**: ランダムに生成された 256bit 鍵。実際の機密データを暗号化する
-- **KEK（Key Encryption Key）**: PIN から PBKDF2-SHA256 で導出される鍵
-- **EMK（Encrypted Master Key）**: KEK で暗号化された MK
+- **KEK（Key Encryption Key）**: PINからArgon2idで導出される32 byte鍵
+- **EMK（Encrypted Master Key）**: KEKでXChaCha20-Poly1305認証付き暗号化されたMK
 - EMK はセキュアストレージバックエンドに保存する
 - PIN 変更時は EMK のみ再暗号化すればよく、全データの再暗号化は不要
 
@@ -95,9 +96,8 @@
 ├─────────────────────────────────────┤
 │ Core Vault Module (QtCore only)     │
 │  - SecureBuffer                     │
-│  - ChaCha20 (stream cipher)         │
-│  - Kdf (PBKDF2-SHA256)              │
-│  - Mac (HMAC-SHA256)                │
+│  - libsodium (Argon2id / AEAD)      │
+│  - SecureBuffer                     │
 ├─────────────────────────────────────┤
 │ Storage Backends (QtCore only)      │
 │  - SystemKeychainBackend            │
@@ -122,15 +122,9 @@
    - カウンター管理を改善
    - Qt 依存なし
 
-3. **KDF の実装**
-   - PBKDF2-SHA256 を `QCryptographicHash` を使って自前実装
-   - 将来的に Argon2id へ切り替え可能なインターフェース設計
-   - QtCore のみ
-
-4. **MAC の実装**
-   - HMAC-SHA256 を `QCryptographicHash` を使って実装
-   - または `QMessageAuthenticationCode`（QtCore に含まれる）を利用
-   - QtCore のみ
+3. **AEAD / KDF の実装**
+   - libsodiumのArgon2idとXChaCha20-Poly1305を使用する
+   - 自作の暗号合成・タグ比較を行わない
 
 ### Phase 2: Vault コアの実装
 
@@ -141,7 +135,8 @@
      - `bool unlock(const SecureBuffer &pin)` — PIN で Vault を解除
      - `void lock()` — メモリ上の MK を消去
      - `QByteArray encrypt(const QByteArray &plain)` — データ暗号化
-     - `QByteArray decrypt(const QByteArray &cipher)` — データ復号
+     - `SecureBuffer decryptToSecureBuffer(const QByteArray &cipher)` — 推奨のデータ復号API
+     - `QByteArray decrypt(const QByteArray &cipher)` — 互換用。平文コピーを生成するため新規コードでは避ける
      - `bool changePin(const SecureBuffer &oldPin, const SecureBuffer &newPin)` — PIN変更
    - QtCore のみ
 
@@ -224,7 +219,7 @@ obfuscation/
 
 ### 前提
 
-- Qt 6（または Qt 5.12 以上）がインストールされていること
+- Qt 6（または Qt 5.12 以上）とlibsodium開発ファイルがインストールされていること
 - 各プラットフォームの開発ツールが整っていること
 
 ### Linux
@@ -233,7 +228,7 @@ libsecret 等の開発ファイルが必要な場合があります。
 
 ```bash
 # Ubuntu/Debian の例
-sudo apt-get install libsecret-1-dev libglib2.0-dev
+sudo apt-get install libsodium-dev libsecret-1-dev libglib2.0-dev
 
 # ビルド
 qmake obfuscation.pro
@@ -256,17 +251,15 @@ nmake  # または mingw32-make
 
 ## セキュリティ上の注意
 
-- ChaCha20 単体では **機密性** は保たれるが **完全性** は保たれない
-  - 必ず HMAC-SHA256 等の MAC と組み合わせること
-- PIN は短いため、KEK 導出には十分なイテレーション数（最低 100,000 回以上）を設定すること
-  - 可能であれば Argon2id への移行を検討
+- Vaultの新規データはXChaCha20-Poly1305 AEADで保護される。独自のChaCha20/HMAC合成を新規実装で使用しないこと
+- Argon2idのコストはEMKヘッダに記録する。ヘッダ改ざんによる過大なメモリ・CPU消費を避けるため、実装は受入上限を設けている
+- 形式は `VLT2` / version 2。試作版のversion 1のEMK・暗号文には互換性がない
 - 復号後の機密情報（APIキー等）は `SecureBuffer` で管理し、使用後は即座に消去すること
 - スワップファイルへの漏洩を防ぐため、可能な限りメモリロックを行うこと
 - OSセキュアストレージが利用できない場合の `FileBackend` は、あくまで最後の手段として位置づけること
 
 ## 今後の検討事項
 
-- Argon2id への KDF 移行
 - 生体認証（Touch ID / Windows Hello）との統合
 - ハードウェアセキュリティモジュール（TPM / Secure Enclave）の活用
 - タイムベースな暗号化鍵ローテーション

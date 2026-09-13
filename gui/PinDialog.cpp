@@ -44,6 +44,7 @@ SecureBuffer PinDialog::pin() const
     QString text = pinEdit_->text();
     QByteArray utf8 = text.toUtf8();
     result.assign(utf8.constData(), utf8.size());
+    result.lock();
     return result;
 }
 

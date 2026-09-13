@@ -57,5 +57,6 @@ SecureBuffer Pbkdf2Sha256::derive(const SecureBuffer &password, const QByteArray
         memcpy(out.data() + offset, t.constData(), copyLen);
     }
 
+    out.lock();
     return out;
 }

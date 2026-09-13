@@ -42,10 +42,11 @@ public:
     uint8_t &operator[](size_t index);
     const uint8_t &operator[](size_t index) const;
 
-    void resize(size_t size);
+    /** Structural changes are refused while the buffer is memory-locked. */
+    bool resize(size_t size);
     void clear();
-    void assign(const void *data, size_t size);
-    void append(const void *data, size_t size);
+    bool assign(const void *data, size_t size);
+    bool append(const void *data, size_t size);
 
     /**
      * @brief ページングファイルへの書き出しを防ぐためメモリをロックする
