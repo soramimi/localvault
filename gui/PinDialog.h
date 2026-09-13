@@ -1,0 +1,61 @@
+#ifndef PINDIALOG_H
+#define PINDIALOG_H
+
+#include "../vault/SecureBuffer.h"
+#include <QDialog>
+#include <QString>
+
+class QLineEdit;
+
+/**
+ * @brief PIN 入力ダイアログ
+ *
+ * Vault の setup / unlock 時に使用する QtWidgets ダイアログ。
+ * 入力はマスク表示される。
+ */
+class PinDialog : public QDialog {
+    Q_OBJECT
+
+public:
+    /**
+     * @brief ダイアログモード
+     */
+    enum class Mode {
+        Unlock, ///< 既存 Vault の解除
+        Setup   ///< 初回セットアップ（2回入力で確認）
+    };
+
+    explicit PinDialog(Mode mode, QWidget *parent = nullptr);
+
+    /**
+     * @brief 入力された PIN を取得する
+     *
+     * 呼び出し側は返された SecureBuffer を適切に管理すること。
+     */
+    SecureBuffer pin() const;
+
+    /**
+     * @brief 解除用 PIN をユーザーに求める
+     * @param parent 親ウィジェット
+     * @param ok 入力されたかどうか
+     * @return 入力された PIN。キャンセル時は空
+     */
+    static SecureBuffer requestPin(QWidget *parent, bool *ok = nullptr);
+
+    /**
+     * @brief セットアップ用の新規 PIN をユーザーに求める
+     * @param parent 親ウィジェット
+     * @param ok 入力されたかどうか
+     * @return 入力された PIN。キャンセル時は空
+     */
+    static SecureBuffer setupPin(QWidget *parent, bool *ok = nullptr);
+
+private:
+    Mode mode_;
+    QLineEdit *pinEdit_ = nullptr;
+    QLineEdit *confirmEdit_ = nullptr;
+
+    void accept() override;
+};
+
+#endif // PINDIALOG_H

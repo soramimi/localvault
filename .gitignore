@@ -1,4 +1,10 @@
 build/
+*.o
+.obfuscation/
+.qmake.stash
+Makefile
 example.decoded.txt
 example.encoded.bin
 obfuscation
+moc_*
+obfuscation-review.Makefile
