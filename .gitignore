@@ -1,10 +1,11 @@
+.qtcreator/
 build/
 *.o
-.obfuscation/
+.localvault/
 .qmake.stash
 Makefile
 example.decoded.txt
 example.encoded.bin
-obfuscation
+localvault
 moc_*
-obfuscation-review.Makefile
+localvault-review.Makefile

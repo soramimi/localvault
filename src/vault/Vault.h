@@ -27,6 +27,9 @@ public:
     bool isSetup() const;
     bool isUnlocked() const;
 
+    /** バックエンド内でEMKを識別するキー。呼び出し元がバックエンドを直接操作する際に使用する */
+    QString emkKey() const { return emkKey_; }
+
     /**
      * @brief 初回セットアップ。PIN から KEK を導出し、MK を生成・暗号化して保存する
      */

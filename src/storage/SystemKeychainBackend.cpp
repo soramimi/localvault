@@ -12,7 +12,7 @@ class SystemKeychainBackend::Impl {
 public:
     Impl()
     {
-        schema_.name = "com.example.obfuscation.Vault";
+        schema_.name = "com.example.localvault.Vault";
         schema_.flags = SECRET_SCHEMA_NONE;
         schema_.attributes[0].name = "key";
         schema_.attributes[0].type = SECRET_SCHEMA_ATTRIBUTE_STRING;
@@ -47,7 +47,7 @@ public:
         remove(key);
 
         QByteArray base64 = data.toBase64();
-        QByteArray label = QStringLiteral("obfuscation vault: %1").arg(key).toUtf8();
+        QByteArray label = QStringLiteral("localvault vault: %1").arg(key).toUtf8();
         QByteArray keyUtf8 = key.toUtf8();
 
         GError *error = nullptr;
@@ -197,7 +197,7 @@ public:
     }
 
 private:
-    QString serviceName_ = QStringLiteral("obfuscation-vault");
+    QString serviceName_ = QStringLiteral("localvault-vault");
 };
 
 #elif defined(Q_OS_WIN)

@@ -38,7 +38,7 @@
 | `storage/FileBackend.h/cpp` | ファイルベースフォールバックバックエンド（Phase 2 で追加） |
 | `storage/SystemKeychainBackend.h/cpp` | OSセキュアストレージバックエンド（Phase 3 で追加） |
 | `gui/PinDialog.h/cpp` | PIN入力ダイアログ（Phase 4 で追加） |
-| `obfuscation.pro` | Qt qmake プロジェクトファイル。`QT += core widgets` |
+| `localvault.pro` | Qt qmake プロジェクトファイル。`QT += core widgets` |
 
 ### 実装済みフェーズ
 
@@ -156,7 +156,7 @@
    - Vault モジュールから分離し、必要に応じて `SecureBuffer` として PIN を渡す
 
 2. **main.cpp の更新**
-   - 旧 `obfuscation` モジュールの呼び出しを新しい `Vault` API に置き換え
+   - 旧 `localvault` モジュールの呼び出しを新しい `Vault` API に置き換え
    - または、テスト用のエントリーポイントとして残す
 
 3. **旧モジュールの整理**
@@ -164,7 +164,7 @@
 
 ### Phase 5: ビルド設定とテスト
 
-1. **obfuscation.pro の更新**
+1. **localvault.pro の更新**
    - `QT += core` を維持
    - プラットフォーム別のライブラリを追加
    - 新しいソースファイルを追加
@@ -182,10 +182,10 @@
 ## 想定するファイル構成
 
 ```
-obfuscation/
+localvault/
 ├── AGENTS.md                           # 本ファイル
 ├── .gitignore
-├── obfuscation.pro                     # Qt qmake プロジェクト
+├── localvault.pro                     # Qt qmake プロジェクト
 ├── main.cpp                            # アプリエントリーポイント
 ├── vault/                              # QtCore のみのVaultコア
 │   ├── SecureBuffer.h/cpp
@@ -216,24 +216,24 @@ libsecret 等の開発ファイルが必要な場合があります。
 sudo apt-get install libsodium-dev libsecret-1-dev libglib2.0-dev
 
 # ビルド
-qmake obfuscation.pro
+qmake localvault.pro
 make
 
 # 既存Vaultを削除（不可逆）
-./obfuscation --reset --yes
+./localvault --reset --yes
 ```
 
 ### macOS
 
 ```bash
-qmake obfuscation.pro
+qmake localvault.pro
 make
 ```
 
 ### Windows
 
 ```bash
-qmake obfuscation.pro
+qmake localvault.pro
 nmake  # または mingw32-make
 ```
 

@@ -173,7 +173,7 @@ static void testSystemKeychainBackend()
         return;
     }
 
-    const QString testKey = QStringLiteral("obfuscation-phase3-test");
+    const QString testKey = QStringLiteral("localvault-phase3-test");
     QByteArray data = "EMK blob for system keychain test";
 
     check(backend.store(testKey, data), "SystemKeychainBackend store");
@@ -191,7 +191,7 @@ static void testVaultWithSystemKeychain()
         return;
     }
 
-    const QString testKey = QStringLiteral("obfuscation-phase3-vault-test");
+    const QString testKey = QStringLiteral("localvault-phase3-vault-test");
     backend.remove(testKey);
 
     Vault vault(&backend, testKey);
@@ -248,7 +248,7 @@ static std::unique_ptr<ISecretStorageBackend> createBackend()
 static int runCliReset()
 {
     auto backend = createBackend();
-    Vault vault(backend.get(), QStringLiteral("vault_emk"));
+    Vault vault(backend.get());
     if (!vault.isAvailable()) {
         std::fprintf(stderr, "ERROR: No Vault storage backend is available.\n");
         return 1;
@@ -257,7 +257,7 @@ static int runCliReset()
         std::printf("No existing Vault was found.\n");
         return 0;
     }
-    if (!backend->remove(QStringLiteral("vault_emk"))) {
+    if (!backend->remove(vault.emkKey())) {
         std::fprintf(stderr, "ERROR: Failed to remove the existing Vault.\n");
         return 1;
     }
@@ -289,19 +289,23 @@ static int runGuiDemo(int argc, char *argv[])
     QApplication app(argc, argv);
 
     auto backend = createBackend();
-    Vault vault(backend.get(), QStringLiteral("vault_emk"));
+    Vault vault(backend.get());
 
     if (vault.isSetup()) {
-        QMessageBox choice;
-        choice.setWindowTitle(QObject::tr("Vault"));
-        choice.setText(QObject::tr("Unlock the existing Vault, or permanently reset it?"));
-        QPushButton *unlockButton = choice.addButton(QObject::tr("Unlock"), QMessageBox::AcceptRole);
-        QPushButton *resetButton = choice.addButton(QObject::tr("Reset Vault"), QMessageBox::DestructiveRole);
-        choice.addButton(QMessageBox::Cancel);
-        choice.exec();
-        if (choice.clickedButton() == resetButton) {
-            if (!resetVaultFromGui(vault)) return 0;
-        } else if (choice.clickedButton() != unlockButton) {
+        for (;;) {
+            QMessageBox choice;
+            choice.setWindowTitle(QObject::tr("Vault"));
+            choice.setText(QObject::tr("Unlock the existing Vault, or permanently reset it?"));
+            QPushButton *unlockButton = choice.addButton(QObject::tr("Unlock"), QMessageBox::AcceptRole);
+            QPushButton *resetButton = choice.addButton(QObject::tr("Reset Vault"), QMessageBox::DestructiveRole);
+            choice.addButton(QMessageBox::Cancel);
+            choice.exec();
+
+            if (choice.clickedButton() == unlockButton) break;
+            if (choice.clickedButton() == resetButton) {
+                if (resetVaultFromGui(vault)) break;
+                continue;
+            }
             return 0;
         }
     } else {

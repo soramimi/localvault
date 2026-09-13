@@ -1,4 +1,4 @@
-# Obfuscation / Local Vault
+# Local Vault
 
 ローカルデスクトップGUIアプリケーション向けの、APIキー等の機密情報を安全に管理するための実装サンプルです。
 
@@ -56,10 +56,10 @@
 ## ファイル構成
 
 ```
-obfuscation/
+localvault/
 ├── AGENTS.md                    # エージェント向け詳細設計書
 ├── README.md                    # 本ファイル
-├── obfuscation.pro              # Qt qmake プロジェクト
+├── localvault.pro              # Qt qmake プロジェクト
 ├── main.cpp                     # テストランナー / GUI デモ
 ├── vault/                       # QtCore のみの Vault コア
 │   ├── SecureBuffer.h/cpp
@@ -87,30 +87,30 @@ obfuscation/
 sudo apt-get install libsodium-dev libsecret-1-dev libglib2.0-dev
 
 # ビルド
-qmake obfuscation.pro
+qmake localvault.pro
 make
 
 # テスト実行
-./obfuscation --test
+./localvault --test
 
 # GUI デモ実行
-./obfuscation
+./localvault
 
 # 既存Vaultを削除（不可逆。次回GUI起動時に再セットアップ）
-./obfuscation --reset --yes
+./localvault --reset --yes
 ```
 
 ### macOS
 
 ```bash
-qmake obfuscation.pro
+qmake localvault.pro
 make
 ```
 
 ### Windows
 
 ```bash
-qmake obfuscation.pro
+qmake localvault.pro
 nmake  # または mingw32-make
 ```
 
@@ -210,7 +210,7 @@ EMK と暗号文には、magic、形式バージョン、レコード種別、�
 リセットは既存EMKを削除し、新しいMKでVaultを作り直す不可逆操作である。旧MKで暗号化したデータは復号できなくなるため、必要なデータは先に復号・退避すること。
 
 - GUIでは、既存Vaultを検出した際に「Reset Vault」を選択し、警告確認後に新PINを設定する。
-- CLIでは`./obfuscation --reset --yes`を実行する。CLI操作はEMKを削除し、次の通常起動時にGUIで新規セットアップを行う。`--yes`なしでは何も削除しない。
+- CLIでは`./localvault --reset --yes`を実行する。CLI操作はEMKを削除し、次の通常起動時にGUIで新規セットアップを行う。`--yes`なしでは何も削除しない。
 - アプリケーションコードからは`Vault::reset(const SecureBuffer &newPin)`を使用する。
 
 ### バックエンドの直接利用

@@ -202,7 +202,7 @@ bool Vault::reset(const SecureBuffer &newPin)
 {
     if (!isAvailable() || newPin.empty()) return false;
 
-    lock();
     if (isSetup() && !backend_->remove(emkKey_)) return false;
+    lock();
     return setup(newPin);
 }
