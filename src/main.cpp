@@ -39,6 +39,12 @@ static SecureBuffer pinFromUtf8(const char *s)
 	return pin;
 }
 
+static bool secureBufferEquals(const SecureBuffer &buf, const QByteArray &ba)
+{
+	return buf.size() == static_cast<size_t>(ba.size())
+			 && QByteArray(reinterpret_cast<const char *>(buf.data()), static_cast<int>(buf.size())) == ba;
+}
+
 static void testSecureBuffer()
 {
 	SecureBuffer buf(32);
@@ -73,21 +79,16 @@ static void testVaultSetupUnlock()
 	check(!encrypted.isEmpty(), "Vault encrypt");
 	check(encrypted != secret, "Vault encryption changes data");
 	
-	QByteArray decrypted = vault.decrypt(encrypted);
-	check(decrypted == secret, "Vault decrypt");
-	
-	SecureBuffer secureDecrypted = vault.decryptToSecureBuffer(encrypted);
-	check(secureDecrypted.size() == static_cast<size_t>(secret.size())
-			  && QByteArray(reinterpret_cast<const char *>(secureDecrypted.data()), static_cast<int>(secureDecrypted.size())) == secret,
-		  "Vault decrypts to SecureBuffer");
+	SecureBuffer decrypted = vault.decryptToSecureBuffer(encrypted);
+	check(secureBufferEquals(decrypted, secret), "Vault decrypt");
 	
 	vault.lock();
 	check(!vault.isUnlocked(), "Vault locked");
-	check(vault.decrypt(encrypted).isEmpty(), "Vault decrypt fails when locked");
+	check(vault.decryptToSecureBuffer(encrypted).empty(), "Vault decrypt fails when locked");
 	
 	check(vault.unlock(pin), "Vault unlock");
 	check(vault.isUnlocked(), "Vault unlocked");
-	check(vault.decrypt(encrypted) == secret, "Vault decrypt after unlock");
+	check(secureBufferEquals(vault.decryptToSecureBuffer(encrypted), secret), "Vault decrypt after unlock");
 }
 
 static void testVaultWrongPin()
@@ -124,7 +125,7 @@ static void testVaultChangePin()
 	vault.lock();
 	check(!vault.unlock(oldPin), "Vault unlock with old PIN fails");
 	check(vault.unlock(newPin), "Vault unlock with new PIN succeeds");
-	check(vault.decrypt(encrypted) == secret, "Vault decrypt after PIN change");
+	check(secureBufferEquals(vault.decryptToSecureBuffer(encrypted), secret), "Vault decrypt after PIN change");
 }
 
 static void testVaultReset()
@@ -140,7 +141,7 @@ static void testVaultReset()
 	
 	check(vault.reset(newPin), "Vault reset");
 	check(vault.isUnlocked(), "Vault unlocked after reset");
-	check(vault.decrypt(oldCipher).isEmpty(), "Vault cannot decrypt pre-reset data");
+	check(vault.decryptToSecureBuffer(oldCipher).empty(), "Vault cannot decrypt pre-reset data");
 	
 	vault.lock();
 	check(!vault.unlock(oldPin), "Vault old PIN fails after reset");
@@ -162,7 +163,22 @@ static void testVaultTamperedData()
 	char tampered = static_cast<char>(encrypted[encrypted.size() / 2] ^ 0xff);
 	encrypted[encrypted.size() / 2] = tampered;
 	
-	check(vault.decrypt(encrypted).isEmpty(), "Vault detects tampered data");
+	check(vault.decryptToSecureBuffer(encrypted).empty(), "Vault detects tampered data");
+}
+
+static void testFileBackendSanitization()
+{
+	QTemporaryDir tempDir;
+	check(tempDir.isValid(), "FileBackend sanitization temp dir valid");
+	
+	FileBackend backend(tempDir.path());
+	QByteArray data = "test data";
+	
+	// 無害化が必要なキーで保存・読み出し
+	const QString dangerousKey = QStringLiteral("../<bad>:key|name?*");
+	check(backend.store(dangerousKey, data), "FileBackend stores sanitized key");
+	check(backend.load(dangerousKey) == data, "FileBackend loads sanitized key");
+	check(backend.remove(dangerousKey), "FileBackend removes sanitized key");
 }
 
 static void testSystemKeychainBackend()
@@ -205,7 +221,7 @@ static void testVaultWithSystemKeychain()
 	
 	vault.lock();
 	check(vault.unlock(pin), "Vault unlock with SystemKeychainBackend");
-	check(vault.decrypt(encrypted) == secret, "Vault decrypt with SystemKeychainBackend");
+	check(secureBufferEquals(vault.decryptToSecureBuffer(encrypted), secret), "Vault decrypt with SystemKeychainBackend");
 	
 	vault.lock();
 	backend.remove(testKey);
@@ -217,6 +233,7 @@ static int runTests()
 	testSecureBuffer();
 	
 	std::printf("\n=== Phase 2: Vault Core Tests ===\n");
+	testFileBackendSanitization();
 	testVaultSetupUnlock();
 	testVaultWrongPin();
 	testVaultChangePin();
@@ -341,14 +358,15 @@ static int runGuiDemo(int argc, char *argv[])
 	
 	QByteArray secret = "API_KEY=sk-abcdef1234567890";
 	QByteArray encrypted = vault.encrypt(secret);
-	QByteArray decrypted = vault.decrypt(encrypted);
+	SecureBuffer decrypted = vault.decryptToSecureBuffer(encrypted);
 	
 	QString message;
-	if (decrypted == secret) {
-		message = QObject::tr("Vault unlocked and roundtrip verified successfully.\n\nDecrypted: %1").arg(QString::fromUtf8(decrypted));
+	if (secureBufferEquals(decrypted, secret)) {
+		message = QObject::tr("Vault unlocked and roundtrip verified successfully.\n\nDecrypted: %1").arg(QString::fromUtf8(reinterpret_cast<const char *>(decrypted.data()), static_cast<int>(decrypted.size())));
 	} else {
 		message = QObject::tr("Vault roundtrip failed.");
 	}
+	decrypted.clear();
 	
 	QMessageBox::information(nullptr, QObject::tr("Vault Demo"), message);
 	

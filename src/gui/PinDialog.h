@@ -26,6 +26,7 @@ public:
 	};
 
 	explicit PinDialog(Mode mode, QWidget *parent = nullptr);
+	~PinDialog() override;
 
 	/**
 	 * @brief 入力された PIN を取得する

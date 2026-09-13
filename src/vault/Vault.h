@@ -21,8 +21,9 @@ private:
 	static constexpr int NONCE_SIZE = 24;
 	static constexpr int MK_SIZE = 32;
 	static constexpr int TAG_SIZE = 16;
+	// libsodium crypto_pwhash_OPSLIMIT_MODERATE / MEMLIMIT_MODERATE に相当
 	static constexpr quint32 ARGON2_OPSLIMIT = 3;
-	static constexpr quint32 ARGON2_MEMLIMIT = 64 * 1024 * 1024;
+	static constexpr quint32 ARGON2_MEMLIMIT = 256 * 1024 * 1024;
 	
 	ISecretStorageBackend *backend_;
 	QString emkKey_;
@@ -71,10 +72,9 @@ public:
 	
 	/**
 	 * @brief 暗号文を復号する。unlock 済みである必要がある
+	 *
+	 * 平文は SecureBuffer に返され、使用後は明示的に clear() すること。
 	 */
-	QByteArray decrypt(const QByteArray &cipher);
-	
-	/** Preferred decryption API: avoids placing the result in QByteArray. */
 	SecureBuffer decryptToSecureBuffer(const QByteArray &cipher);
 	
 	/**

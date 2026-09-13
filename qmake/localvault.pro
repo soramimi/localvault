@@ -4,15 +4,15 @@ TARGET = localvault
 QT += core widgets
 CONFIG += c++17
 CONFIG -= app_bundle
-CONFIG += link_pkgconfig
+linux|macx:CONFIG += link_pkgconfig
 
 msvc:INCLUDEPATH += C:/vcpkg/installed/x64-windows/include
 msvc:CONFIG(debug,debug|release) {
-	msvc:LIBS += -LC:/vcpkg/installed/x64-windows/debug/lib
+	LIBS += -LC:/vcpkg/installed/x64-windows/debug/lib
 }
 
 msvc:CONFIG(release,debug|release) {
-	msvc:LIBS += -LC:/vcpkg/installed/x64-windows/lib
+	LIBS += -LC:/vcpkg/installed/x64-windows/lib
 }
 
 
@@ -41,4 +41,10 @@ macx {
 }
 win32 {
 	LIBS += -lcrypt32 -llibsodium
+	# テスト出力をコンソールに表示するため（GUI デモ時もコンソールウィンドウが表示される）
+	CONFIG += console
 }
+
+DISTFILES += \
+	../AGENTS.md \
+	../README.md

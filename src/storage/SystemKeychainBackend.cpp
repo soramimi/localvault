@@ -133,9 +133,9 @@ public:
 		CFStringRef account = CFStringCreateWithCString(nullptr, keyUtf8.constData(), kCFStringEncodingUTF8);
 		CFDataRef value = CFDataCreate(nullptr, reinterpret_cast<const UInt8 *>(data.constData()), data.size());
 
-		const void *keys[] = { kSecClass, kSecAttrService, kSecAttrAccount, kSecValueData };
-		const void *values[] = { kSecClassGenericPassword, service, account, value };
-		CFDictionaryRef query = CFDictionaryCreate(nullptr, keys, values, 4, nullptr, nullptr);
+		const void *keys[] = { kSecClass, kSecAttrService, kSecAttrAccount, kSecValueData, kSecAttrAccessible };
+		const void *values[] = { kSecClassGenericPassword, service, account, value, kSecAttrAccessibleWhenUnlockedThisDeviceOnly };
+		CFDictionaryRef query = CFDictionaryCreate(nullptr, keys, values, 5, nullptr, nullptr);
 
 		OSStatus status = SecItemAdd(query, nullptr);
 

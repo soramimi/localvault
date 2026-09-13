@@ -10,3 +10,6 @@ localvault
 moc_*
 localvault-review.Makefile
 _bin/
+qmake/Makefile.*
+qmake/release/
+qmake/debug/

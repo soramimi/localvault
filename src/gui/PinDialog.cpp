@@ -4,6 +4,25 @@
 #include <QFormLayout>
 #include <QLineEdit>
 #include <QMessageBox>
+#include <algorithm>
+
+namespace {
+
+void secureClear(QByteArray &ba)
+{
+	if (!ba.isEmpty()) {
+		std::fill(ba.begin(), ba.end(), 0);
+	}
+}
+
+void secureClear(QString &s)
+{
+	if (!s.isEmpty()) {
+		std::fill(s.begin(), s.end(), QChar());
+	}
+}
+
+} // namespace
 
 PinDialog::PinDialog(Mode mode, QWidget *parent)
 	: QDialog(parent)
@@ -33,6 +52,16 @@ PinDialog::PinDialog(Mode mode, QWidget *parent)
 	setLayout(formLayout);
 }
 
+PinDialog::~PinDialog()
+{
+	if (pinEdit_) {
+		pinEdit_->clear();
+	}
+	if (confirmEdit_) {
+		confirmEdit_->clear();
+	}
+}
+
 SecureBuffer PinDialog::pin() const
 {
 	SecureBuffer result;
@@ -40,6 +69,8 @@ SecureBuffer PinDialog::pin() const
 	QByteArray utf8 = text.toUtf8();
 	result.assign(utf8.constData(), utf8.size());
 	result.lock();
+	secureClear(utf8);
+	secureClear(text);
 	return result;
 }
 

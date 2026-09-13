@@ -16,7 +16,7 @@ constexpr int MK_SIZE = 32;
 constexpr int TAG_SIZE = 16;
 constexpr int EMK_HEADER_SIZE = MAGIC_SIZE + 1 + 1 + 1 + 1 + 4 + 4 + 1 + SALT_SIZE;
 constexpr int DATA_HEADER_SIZE = MAGIC_SIZE + 1 + 1 + 1;
-constexpr quint32 MIN_ARGON2_OPSLIMIT = 3;
+constexpr quint32 MIN_ARGON2_OPSLIMIT = 2;
 constexpr quint32 MAX_ARGON2_OPSLIMIT = 10;
 constexpr quint32 MIN_ARGON2_MEMLIMIT = 64 * 1024 * 1024;
 constexpr quint32 MAX_ARGON2_MEMLIMIT = 1024 * 1024 * 1024;
@@ -213,6 +213,9 @@ SecureBuffer Vault::decryptToSecureBuffer(const QByteArray &cipher)
 	const QByteArray header = cipher.left(DATA_HEADER_SIZE);
 	const QByteArray nonce = cipher.mid(DATA_HEADER_SIZE, NONCE_SIZE);
 	const QByteArray encrypted = cipher.mid(DATA_HEADER_SIZE + NONCE_SIZE);
+	if (encrypted.size() < TAG_SIZE) {
+		return {};
+	}
 	SecureBuffer plain(static_cast<size_t>(encrypted.size() - TAG_SIZE));
 	unsigned long long plainLen = 0;
 	if (crypto_aead_xchacha20poly1305_ietf_decrypt(plain.data(), &plainLen, nullptr,
@@ -225,15 +228,6 @@ SecureBuffer Vault::decryptToSecureBuffer(const QByteArray &cipher)
 		return {};
 	}
 	return plain;
-}
-
-QByteArray Vault::decrypt(const QByteArray &cipher)
-{
-	SecureBuffer plain = decryptToSecureBuffer(cipher);
-	if (plain.empty()) return {};
-	QByteArray result(reinterpret_cast<const char *>(plain.data()), static_cast<int>(plain.size()));
-	plain.clear();
-	return result;
 }
 
 bool Vault::changePin(const SecureBuffer &oldPin, const SecureBuffer &newPin)

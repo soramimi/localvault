@@ -170,6 +170,7 @@ vault.unlock(pin);
 QByteArray secret = "API_KEY=sk-1234567890";
 QByteArray encrypted = vault.encrypt(secret);
 SecureBuffer decrypted = vault.decryptToSecureBuffer(encrypted);
+// 使用後は decrypted.clear() で明示的に消去
 
 // PIN 変更
 SecureBuffer newPin;
@@ -207,6 +208,8 @@ if (ok) {
 ## 形式と互換性
 
 EMK と暗号文には、magic、形式バージョン、レコード種別、暗号方式、KDF方式・計算/メモリコスト（EMKのみ）を含め、ヘッダ全体をAEADの追加認証データとして保護する。現行形式は `VLT2` / version 2 である。
+
+EMK のヘッダには Argon2id の opslimit / memlimit が記録される。デフォルトは opslimit 3、memlimit 256 MiB（libsodium の MODERATE 相当）である。PIN 変更時も新しい salt と共にこれらのパラメータが再設定される。
 
 初期の試作版（ChaCha20 + HMAC、version 1）のEMKおよび暗号文とは互換性がない。試作版のデータを利用している場合は、その版で復号してから本版で再セットアップ・再暗号化すること。新規の`setup()`は既存EMKを上書きしない。
 
@@ -293,11 +296,12 @@ if (backend.isAvailable()) {
 ## セキュリティ上の注意
 
 - 本実装はあくまで実験・サンプルコードです。本番利用の前にセキュリティレビューを行ってください。
-- KEKはArgon2id（opslimit 3、memlimit 64 MiB）で導出します。コストはEMKに格納され、受入値には上限があります。
-- 新規コードでは`decrypt()`ではなく、平文を通常メモリへコピーしない`decryptToSecureBuffer()`を使用してください。
-- `FileBackend` は OS セキュアストレージが使えない場合の最後の手段として位置づけてください。
+- KEKはArgon2id（opslimit 3、memlimit 256 MiB）で導出します。コストはEMKに格納され、受入値には上下限があります。
+- 復号には平文を通常メモリへコピーしない`decryptToSecureBuffer()`を使用してください。
+- `FileBackend` は OS セキュアストレージが使えない場合の最後の手段として位置づけてください。保存キーは英数字・`_`・`.`・`-` のみに無害化され、ディレクトリ・ファイルのパーミッションは可能な範囲で制限されます。
 - 復号後の機密情報は `SecureBuffer` で管理し、使用後は即座に消去してください。
 - 可能な限りメモリロック（`mlock` / `VirtualLock`）を利用し、スワップファイルへの漏洩を防いでください。
+- Windows ではテスト出力を表示するためコンソールサブシステムでビルドされます。リリース時は必要に応じて `qmake/localvault.pro` の `CONFIG += console` を削除してください。
 
 ## ライセンス
 

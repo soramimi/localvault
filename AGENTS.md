@@ -21,7 +21,7 @@
   - `QByteArray`, `QCryptographicHash`, `QFile`, `QSaveFile` 等は使用可能
   - `QtGui`, `QtWidgets` への依存は GUI レイヤーに限定
 - 暗号化アルゴリズム: libsodium の XChaCha20-Poly1305（AEAD）
-- 鍵導出: libsodium の Argon2id（opslimit 3、memlimit 64 MiB）
+- 鍵導出: libsodium の Argon2id（opslimit 3、memlimit 256 MiB、MODERATE 相当）
 - 乱数・安全な消去・メモリロック: libsodium
 - 対象プラットフォーム: Linux, macOS, Windows（マルチプラットフォーム対応）
 
@@ -94,7 +94,6 @@
 ├─────────────────────────────────────┤
 │ Storage Backends (QtCore only)      │
 │  - SystemKeychainBackend            │
-│  - OnePasswordBackend               │
 │  - FileBackend (fallback)           │
 └─────────────────────────────────────┘
 ```
@@ -122,8 +121,7 @@
      - `bool unlock(const SecureBuffer &pin)` — PIN で Vault を解除
      - `void lock()` — メモリ上の MK を消去
      - `QByteArray encrypt(const QByteArray &plain)` — データ暗号化
-     - `SecureBuffer decryptToSecureBuffer(const QByteArray &cipher)` — 推奨のデータ復号API
-     - `QByteArray decrypt(const QByteArray &cipher)` — 互換用。平文コピーを生成するため新規コードでは避ける
+     - `SecureBuffer decryptToSecureBuffer(const QByteArray &cipher)` — データ復号API（平文はSecureBufferに返す）
      - `bool changePin(const SecureBuffer &oldPin, const SecureBuffer &newPin)` — PIN変更
      - `bool reset(const SecureBuffer &newPin)` — 既存EMKを破棄して再セットアップする不可逆操作
    - QtCore のみ
@@ -140,11 +138,7 @@
    - Windows: DPAPI（`CryptProtectData` / `CryptUnprotectData`）
    - プラットフォーム判定は `Q_OS_LINUX`, `Q_OS_MACOS`, `Q_OS_WIN` を使用
 
-2. **OnePasswordBackend**
-   - 1Password API を利用して EMK を外部保存
-   - 既存の実験コードを統合
-
-3. **FileBackend**
+2. **FileBackend**
    - OSセキュアストレージが使えない環境のフォールバック
    - EMK をファイルに保存し、パーミッション `0600` を設定
    - `QSaveFile` 等を使用して安全に書き込み
@@ -244,17 +238,19 @@ nmake  # または mingw32-make
 ## セキュリティ上の注意
 
 - Vaultの新規データはXChaCha20-Poly1305 AEADで保護される。独自のChaCha20/HMAC合成を新規実装で使用しないこと
-- Argon2idのコストはEMKヘッダに記録する。ヘッダ改ざんによる過大なメモリ・CPU消費を避けるため、実装は受入上限を設けている
+- Argon2idのコストはEMKヘッダに記録する。デフォルトは opslimit 3、memlimit 256 MiB（libsodium MODERATE 相当）。ヘッダ改ざんによる過大なメモリ・CPU消費を避けるため、実装は受入上下限を設けている
 - 形式は `VLT2` / version 2。試作版のversion 1のEMK・暗号文には互換性がない
 - Vaultのリセットは既存MKを失わせ、旧暗号文を復号不能にする。GUIでは確認・新PIN入力を必須とし、CLIでは`--reset --yes`を必須とする
 - 復号後の機密情報（APIキー等）は `SecureBuffer` で管理し、使用後は即座に消去すること
 - スワップファイルへの漏洩を防ぐため、可能な限りメモリロックを行うこと
-- OSセキュアストレージが利用できない場合の `FileBackend` は、あくまで最後の手段として位置づけること
+- OSセキュアストレージが利用できない場合の `FileBackend` は、あくまで最後の手段として位置づけること。保存キーは英数字・`_`・`.`・`-` のみに無害化され、UNIX ではディレクトリ・ファイルのパーミッションを制限する
+- Windows ではテスト出力を表示するため `CONFIG += console` でビルドする。リリース時は必要に応じて解除する
 
 ## 今後の検討事項
 
 - 生体認証（Touch ID / Windows Hello）との統合
 - ハードウェアセキュリティモジュール（TPM / Secure Enclave）の活用
+- 外部キー保存サービス（1Password API 等）との統合
 - タイムベースな暗号化鍵ローテーション
 - 監査ログの記録
 
