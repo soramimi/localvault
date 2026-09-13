@@ -1,0 +1,4 @@
+build/
+example.decoded.txt
+example.encoded.bin
+obfuscation
