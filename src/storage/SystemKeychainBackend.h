@@ -10,6 +10,8 @@
  * - Linux: libsecret (Secret Service API)
  * - macOS: Keychain Services (Security.framework)
  * - Windows: DPAPI + ローカルファイル
+ *
+ * Qt 非依存。std::string / std::vector<char> を使用する。
  */
 class SystemKeychainBackend : public ISecretStorageBackend {
 public:
@@ -17,10 +19,10 @@ public:
 	~SystemKeychainBackend() override;
 
 	bool isAvailable() const override;
-	QString name() const override;
-	bool store(const QString &key, const QByteArray &data) override;
-	QByteArray load(const QString &key) override;
-	bool remove(const QString &key) override;
+	std::string name() const override;
+	bool store(const std::string &key, const Blob &data) override;
+	Blob load(const std::string &key) override;
+	bool remove(const std::string &key) override;
 
 private:
 	class Impl;

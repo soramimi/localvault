@@ -1,12 +1,89 @@
 #include "SystemKeychainBackend.h"
 
-#include <QString>
-#include <QtGlobal>
+#include <algorithm>
+#include <cctype>
+#include <cstdlib>
+#include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <random>
+#include <sstream>
 
-#if defined(Q_OS_LINUX)
+#if defined(__linux__)
 // Qt の signals マクロと glib の signals 構造体メンバー名が衝突するのを防ぐ
 #undef signals
 #include <libsecret/secret.h>
+
+namespace {
+
+std::string base64Encode(const Blob &data)
+{
+	static const char alphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+	std::string out;
+	out.reserve(((data.size() + 2) / 3) * 4);
+	for (size_t i = 0; i < data.size(); i += 3) {
+		uint32_t triple = 0;
+		int len = 0;
+		for (size_t j = 0; j < 3 && i + j < data.size(); ++j) {
+			triple |= static_cast<uint8_t>(data[i + j]) << (16 - j * 8);
+			++len;
+		}
+		out.push_back(alphabet[(triple >> 18) & 0x3f]);
+		out.push_back(alphabet[(triple >> 12) & 0x3f]);
+		out.push_back(len > 1 ? alphabet[(triple >> 6) & 0x3f] : '=');
+		out.push_back(len > 2 ? alphabet[triple & 0x3f] : '=');
+	}
+	return out;
+}
+
+Blob base64Decode(const std::string &in)
+{
+	static const int decodeTable[256] = {
+		-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+		-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+		-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 62, -1, -1, -1, 63,
+		52, 53, 54, 55, 56, 57, 58, 59, 60, 61, -1, -1, -1, -1, -1, -1,
+		-1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14,
+		15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, -1, -1, -1, -1, -1,
+		-1, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40,
+		41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, -1, -1, -1, -1, -1,
+		-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+		-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+		-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+		-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+		-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+		-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+		-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+		-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1
+	};
+
+	Blob out;
+	out.reserve((in.size() / 4) * 3);
+	uint32_t triple = 0;
+	int bits = 0;
+	int pad = 0;
+	for (char c : in) {
+		if (std::isspace(static_cast<unsigned char>(c))) continue;
+		if (c == '=') {
+			++pad;
+			continue;
+		}
+		int val = decodeTable[static_cast<unsigned char>(c)];
+		if (val < 0) return { };
+		triple = (triple << 6) | val;
+		bits += 6;
+		if (bits >= 8) {
+			bits -= 8;
+			out.push_back(static_cast<char>((triple >> bits) & 0xff));
+		}
+	}
+	while (pad-- > 0 && !out.empty()) {
+		// パディングは無視
+	}
+	return out;
+}
+
+} // namespace
 
 class SystemKeychainBackend::Impl {
 public:
@@ -42,23 +119,22 @@ public:
 		return available;
 	}
 
-	bool store(const QString &key, const QByteArray &data)
+	bool store(const std::string &key, const Blob &data)
 	{
 		remove(key);
 
-		QByteArray base64 = data.toBase64();
-		QByteArray label = QStringLiteral("localvault vault: %1").arg(key).toUtf8();
-		QByteArray keyUtf8 = key.toUtf8();
+		std::string base64 = base64Encode(data);
+		std::string label = "localvault vault: " + key;
 
 		GError *error = nullptr;
 		bool ok = secret_password_store_sync(
 			&schema_,
 			SECRET_COLLECTION_DEFAULT,
-			label.constData(),
-			base64.constData(),
+			label.c_str(),
+			base64.c_str(),
 			nullptr,
 			&error,
-			"key", keyUtf8.constData(),
+			"key", key.c_str(),
 			nullptr);
 
 		if (error) {
@@ -67,20 +143,19 @@ public:
 		return ok;
 	}
 
-	QByteArray load(const QString &key)
+	Blob load(const std::string &key)
 	{
-		QByteArray keyUtf8 = key.toUtf8();
 		GError *error = nullptr;
 		gchar *password = secret_password_lookup_sync(
 			&schema_,
 			nullptr,
 			&error,
-			"key", keyUtf8.constData(),
+			"key", key.c_str(),
 			nullptr);
 
-		QByteArray result;
+		Blob result;
 		if (password) {
-			result = QByteArray::fromBase64(password);
+			result = base64Decode(password);
 			secret_password_free(password);
 		}
 
@@ -90,15 +165,14 @@ public:
 		return result;
 	}
 
-	bool remove(const QString &key)
+	bool remove(const std::string &key)
 	{
-		QByteArray keyUtf8 = key.toUtf8();
 		GError *error = nullptr;
 		bool ok = secret_password_clear_sync(
 			&schema_,
 			nullptr,
 			&error,
-			"key", keyUtf8.constData(),
+			"key", key.c_str(),
 			nullptr);
 
 		if (error) {
@@ -111,7 +185,7 @@ private:
 	SecretSchema schema_;
 };
 
-#elif defined(Q_OS_MACOS)
+#elif defined(__APPLE__)
 #include <CoreFoundation/CoreFoundation.h>
 #include <Security/Security.h>
 
@@ -122,16 +196,13 @@ public:
 		return true;
 	}
 
-	bool store(const QString &key, const QByteArray &data)
+	bool store(const std::string &key, const Blob &data)
 	{
 		remove(key);
 
-		QByteArray serviceUtf8 = serviceName_.toUtf8();
-		QByteArray keyUtf8 = key.toUtf8();
-
-		CFStringRef service = CFStringCreateWithCString(nullptr, serviceUtf8.constData(), kCFStringEncodingUTF8);
-		CFStringRef account = CFStringCreateWithCString(nullptr, keyUtf8.constData(), kCFStringEncodingUTF8);
-		CFDataRef value = CFDataCreate(nullptr, reinterpret_cast<const UInt8 *>(data.constData()), data.size());
+		CFStringRef service = CFStringCreateWithCString(nullptr, serviceName_.c_str(), kCFStringEncodingUTF8);
+		CFStringRef account = CFStringCreateWithCString(nullptr, key.c_str(), kCFStringEncodingUTF8);
+		CFDataRef value = CFDataCreate(nullptr, reinterpret_cast<const UInt8 *>(data.data()), static_cast<CFIndex>(data.size()));
 
 		const void *keys[] = { kSecClass, kSecAttrService, kSecAttrAccount, kSecValueData, kSecAttrAccessible };
 		const void *values[] = { kSecClassGenericPassword, service, account, value, kSecAttrAccessibleWhenUnlockedThisDeviceOnly };
@@ -147,13 +218,10 @@ public:
 		return status == errSecSuccess;
 	}
 
-	QByteArray load(const QString &key)
+	Blob load(const std::string &key)
 	{
-		QByteArray serviceUtf8 = serviceName_.toUtf8();
-		QByteArray keyUtf8 = key.toUtf8();
-
-		CFStringRef service = CFStringCreateWithCString(nullptr, serviceUtf8.constData(), kCFStringEncodingUTF8);
-		CFStringRef account = CFStringCreateWithCString(nullptr, keyUtf8.constData(), kCFStringEncodingUTF8);
+		CFStringRef service = CFStringCreateWithCString(nullptr, serviceName_.c_str(), kCFStringEncodingUTF8);
+		CFStringRef account = CFStringCreateWithCString(nullptr, key.c_str(), kCFStringEncodingUTF8);
 
 		const void *keys[] = { kSecClass, kSecAttrService, kSecAttrAccount, kSecReturnData, kSecMatchLimit };
 		const void *values[] = { kSecClassGenericPassword, service, account, kCFBooleanTrue, kSecMatchLimitOne };
@@ -162,9 +230,10 @@ public:
 		CFDataRef result = nullptr;
 		OSStatus status = SecItemCopyMatching(query, reinterpret_cast<CFTypeRef *>(&result));
 
-		QByteArray data;
+		Blob data;
 		if (status == errSecSuccess && result) {
-			data = QByteArray(reinterpret_cast<const char *>(CFDataGetBytePtr(result)), CFDataGetLength(result));
+			data.resize(static_cast<size_t>(CFDataGetLength(result)));
+			std::memcpy(data.data(), CFDataGetBytePtr(result), data.size());
 			CFRelease(result);
 		}
 
@@ -175,13 +244,10 @@ public:
 		return data;
 	}
 
-	bool remove(const QString &key)
+	bool remove(const std::string &key)
 	{
-		QByteArray serviceUtf8 = serviceName_.toUtf8();
-		QByteArray keyUtf8 = key.toUtf8();
-
-		CFStringRef service = CFStringCreateWithCString(nullptr, serviceUtf8.constData(), kCFStringEncodingUTF8);
-		CFStringRef account = CFStringCreateWithCString(nullptr, keyUtf8.constData(), kCFStringEncodingUTF8);
+		CFStringRef service = CFStringCreateWithCString(nullptr, serviceName_.c_str(), kCFStringEncodingUTF8);
+		CFStringRef account = CFStringCreateWithCString(nullptr, key.c_str(), kCFStringEncodingUTF8);
 
 		const void *keys[] = { kSecClass, kSecAttrService, kSecAttrAccount };
 		const void *values[] = { kSecClassGenericPassword, service, account };
@@ -197,26 +263,61 @@ public:
 	}
 
 private:
-	QString serviceName_ = QStringLiteral("localvault-vault");
+	std::string serviceName_ = "localvault-vault";
 };
 
-#elif defined(Q_OS_WIN)
+#elif defined(_WIN32)
 #ifndef _WIN32_WINNT
 #define _WIN32_WINNT 0x0600
 #endif
-#include <QDir>
-#include <QFile>
-#include <QSaveFile>
-#include <QStandardPaths>
-#include <windows.h>
 #include <dpapi.h>
+#include <shlobj.h>
+#include <windows.h>
+
+namespace {
+
+std::filesystem::path windowsAppDataPath()
+{
+	wchar_t *path = nullptr;
+	if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_RoamingAppData, 0, nullptr, &path)) && path) {
+		std::filesystem::path result(path);
+		CoTaskMemFree(path);
+		return result;
+	}
+	const char *appdata = std::getenv("APPDATA");
+	if (appdata) {
+		return std::filesystem::path(appdata);
+	}
+	return std::filesystem::path(std::getenv("USERPROFILE") ? std::getenv("USERPROFILE") : ".");
+}
+
+std::string generateTempSuffix()
+{
+	std::random_device rd;
+	std::uniform_int_distribution<uint32_t> dist;
+	std::ostringstream oss;
+	oss << ".tmp" << std::hex << dist(rd);
+	return oss.str();
+}
+
+std::string sanitizeKey(const std::string &key)
+{
+	std::string safe = key;
+	for (char &c : safe) {
+		if (c == '/' || c == '\\' || c == ':') {
+			c = '_';
+		}
+	}
+	return safe;
+}
+
+} // namespace
 
 class SystemKeychainBackend::Impl {
 public:
 	Impl()
 	{
-		const QString configDir = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
-		directory_ = configDir + QStringLiteral("/emk");
+		directory_ = windowsAppDataPath() / "localvault" / "emk";
 	}
 
 	bool isAvailable() const
@@ -224,10 +325,10 @@ public:
 		return true;
 	}
 
-	bool store(const QString &key, const QByteArray &data)
+	bool store(const std::string &key, const Blob &data)
 	{
 		DATA_BLOB in;
-		in.pbData = reinterpret_cast<BYTE *>(const_cast<char *>(data.constData()));
+		in.pbData = reinterpret_cast<BYTE *>(const_cast<char *>(data.data()));
 		in.cbData = static_cast<DWORD>(data.size());
 
 		DATA_BLOB out;
@@ -235,63 +336,91 @@ public:
 			return false;
 		}
 
-		QByteArray encrypted(reinterpret_cast<char *>(out.pbData), static_cast<int>(out.cbData));
+		Blob encrypted(reinterpret_cast<char *>(out.pbData), reinterpret_cast<char *>(out.pbData) + out.cbData);
 		LocalFree(out.pbData);
 
-		QDir dir(directory_);
-		if (!dir.exists() && !dir.mkpath(".")) {
+		try {
+			std::filesystem::create_directories(directory_);
+		} catch (...) {
 			return false;
 		}
 
-		const QString path = directory_ + "/" + sanitizeKey(key);
-		QSaveFile file(path);
-		if (!file.open(QIODevice::WriteOnly)) {
+		const std::filesystem::path path = directory_ / sanitizeKey(key);
+		const std::filesystem::path tempPath = path.string() + generateTempSuffix();
+
+		{
+			std::ofstream file(tempPath, std::ios::binary | std::ios::trunc);
+			if (!file) {
+				std::error_code ec;
+				std::filesystem::remove(tempPath, ec);
+				return false;
+			}
+			if (!encrypted.empty()) {
+				file.write(encrypted.data(), static_cast<std::streamsize>(encrypted.size()));
+			}
+			if (!file) {
+				std::error_code ec;
+				std::filesystem::remove(tempPath, ec);
+				return false;
+			}
+			file.flush();
+		}
+
+		std::error_code ec;
+		std::filesystem::rename(tempPath, path, ec);
+		if (ec) {
+			std::error_code removeEc;
+			std::filesystem::remove(tempPath, removeEc);
 			return false;
 		}
-		file.write(encrypted);
-		return file.commit();
+		return true;
 	}
 
-	QByteArray load(const QString &key)
+	Blob load(const std::string &key)
 	{
-		const QString path = directory_ + "/" + sanitizeKey(key);
-		QFile file(path);
-		if (!file.exists() || !file.open(QIODevice::ReadOnly)) {
-			return QByteArray();
+		const std::filesystem::path path = directory_ / sanitizeKey(key);
+		if (!std::filesystem::is_regular_file(path)) {
+			return { };
 		}
 
-		QByteArray encrypted = file.readAll();
+		std::ifstream file(path, std::ios::binary | std::ios::ate);
+		if (!file) {
+			return { };
+		}
+		const auto size = file.tellg();
+		if (size < 0) {
+			return { };
+		}
+		file.seekg(0, std::ios::beg);
+
+		Blob encrypted(static_cast<size_t>(size));
+		if (size > 0 && !file.read(encrypted.data(), size)) {
+			return { };
+		}
+
 		DATA_BLOB in;
 		in.pbData = reinterpret_cast<BYTE *>(encrypted.data());
 		in.cbData = static_cast<DWORD>(encrypted.size());
 
 		DATA_BLOB out;
 		if (!CryptUnprotectData(&in, nullptr, nullptr, nullptr, nullptr, 0, &out)) {
-			return QByteArray();
+			return { };
 		}
 
-		QByteArray data(reinterpret_cast<char *>(out.pbData), static_cast<int>(out.cbData));
+		Blob data(reinterpret_cast<char *>(out.pbData), reinterpret_cast<char *>(out.pbData) + out.cbData);
 		LocalFree(out.pbData);
 		return data;
 	}
 
-	bool remove(const QString &key)
+	bool remove(const std::string &key)
 	{
-		const QString path = directory_ + "/" + sanitizeKey(key);
-		return QFile::remove(path);
+		const std::filesystem::path path = directory_ / sanitizeKey(key);
+		std::error_code ec;
+		return std::filesystem::remove(path, ec);
 	}
 
 private:
-	QString directory_;
-
-	static QString sanitizeKey(const QString &key)
-	{
-		QString safe = key;
-		safe.replace('/', '_');
-		safe.replace('\\', '_');
-		safe.replace(':', '_');
-		return safe;
-	}
+	std::filesystem::path directory_;
 };
 
 #else
@@ -302,17 +431,17 @@ public:
 		return false;
 	}
 
-	bool store(const QString &, const QByteArray &)
+	bool store(const std::string &, const Blob &)
 	{
 		return false;
 	}
 
-	QByteArray load(const QString &)
+	Blob load(const std::string &)
 	{
-		return QByteArray();
+		return { };
 	}
 
-	bool remove(const QString &)
+	bool remove(const std::string &)
 	{
 		return false;
 	}
@@ -334,30 +463,30 @@ bool SystemKeychainBackend::isAvailable() const
 	return impl_->isAvailable();
 }
 
-QString SystemKeychainBackend::name() const
+std::string SystemKeychainBackend::name() const
 {
-#if defined(Q_OS_LINUX)
-	return QStringLiteral("system-keychain-libsecret");
-#elif defined(Q_OS_MACOS)
-	return QStringLiteral("system-keychain-macos");
-#elif defined(Q_OS_WIN)
-	return QStringLiteral("system-keychain-dpapi");
+#if defined(__linux__)
+	return "system-keychain-libsecret";
+#elif defined(__APPLE__)
+	return "system-keychain-macos";
+#elif defined(_WIN32)
+	return "system-keychain-dpapi";
 #else
-	return QStringLiteral("system-keychain-unavailable");
+	return "system-keychain-unavailable";
 #endif
 }
 
-bool SystemKeychainBackend::store(const QString &key, const QByteArray &data)
+bool SystemKeychainBackend::store(const std::string &key, const Blob &data)
 {
 	return impl_->store(key, data);
 }
 
-QByteArray SystemKeychainBackend::load(const QString &key)
+Blob SystemKeychainBackend::load(const std::string &key)
 {
 	return impl_->load(key);
 }
 
-bool SystemKeychainBackend::remove(const QString &key)
+bool SystemKeychainBackend::remove(const std::string &key)
 {
 	return impl_->remove(key);
 }

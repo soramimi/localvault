@@ -12,13 +12,14 @@
 - OSが提供するセキュアストレージを優先的に利用する
 - OSセキュアストレージが利用できない環境では、暗号化ファイルによるフォールバックを提供する
 - 1Password API を使った外部キー保存も選択肢として残す
-- アプリ本体はQtだが、APIキー管理機能（Vaultモジュール）の Qt 依存は `QtCore` のみに抑える
+- アプリ本体はQtだが、APIキー管理機能（Vaultモジュール）は Qt 非依存とする
 
 ## 技術的制約
 
 - GUIフレームワーク: Qt（継続）
-- APIキー管理機能の Qt 依存: `QtCore` のみ
-  - `QByteArray`, `QCryptographicHash`, `QFile`, `QSaveFile` 等は使用可能
+- APIキー管理機能の Qt 依存: なし
+  - `QByteArray`, `QFile`, `QSaveFile` 等は使用しない
+  - バイナリ blob には `std::vector<char>`、識別キー・パスには `std::string` / `std::filesystem::path` を使用
   - `QtGui`, `QtWidgets` への依存は GUI レイヤーに限定
 - 暗号化アルゴリズム: libsodium の XChaCha20-Poly1305（AEAD）
 - 鍵導出: libsodium の Argon2id（opslimit 3、memlimit 256 MiB、MODERATE 相当）
@@ -47,6 +48,7 @@
 - **Phase 3**: SystemKeychainBackend（Linux libsecret / macOS Keychain / Windows DPAPI）
 - **Phase 4**: PIN 入力ダイアログ + GUI デモ統合
 - **Phase 5**: libsodiumを導入し、Argon2id / XChaCha20-Poly1305へ移行。EMK形式のバージョン化、`decryptToSecureBuffer()`、ロック済みバッファの再配置防止を追加
+- **Phase 6**: Vault コア・ストレージバックエンドから Qt 依存を除去。`QByteArray` / `QString` を `std::vector<char>` / `std::string` / `std::filesystem::path` に置き換え
 
 ### 既知の課題
 
@@ -87,12 +89,12 @@
 │ Application Layer                   │
 │  - Vault API                        │
 ├─────────────────────────────────────┤
-│ Core Vault Module (QtCore only)     │
+│ Core Vault Module (Qt 非依存)       │
 │  - SecureBuffer                     │
 │  - libsodium (Argon2id / AEAD)      │
 │  - Vault                            │
 ├─────────────────────────────────────┤
-│ Storage Backends (QtCore only)      │
+│ Storage Backends (Qt 非依存)        │
 │  - SystemKeychainBackend            │
 │  - FileBackend (fallback)           │
 └─────────────────────────────────────┘
@@ -120,15 +122,17 @@
      - `bool setup(const SecureBuffer &pin)` — 初回セットアップ
      - `bool unlock(const SecureBuffer &pin)` — PIN で Vault を解除
      - `void lock()` — メモリ上の MK を消去
-     - `QByteArray encrypt(const QByteArray &plain)` — データ暗号化
-     - `SecureBuffer decryptToSecureBuffer(const QByteArray &cipher)` — データ復号API（平文はSecureBufferに返す）
+      - `Blob encrypt(const Blob &plain)` — データ暗号化
+      - `SecureBuffer decryptToSecureBuffer(const Blob &cipher)` — データ復号API（平文はSecureBufferに返す）
+
      - `bool changePin(const SecureBuffer &oldPin, const SecureBuffer &newPin)` — PIN変更
      - `bool reset(const SecureBuffer &newPin)` — 既存EMKを破棄して再セットアップする不可逆操作
-   - QtCore のみ
+    - Qt 非依存（std::vector<char> / std::string / std::filesystem）
 
 2. **セキュアストレージバックエンドの抽象インターフェース**
    - `ISecretStorageBackend` を定義
-   - QtCore のみ
+   - Qt 非依存
+
 
 ### Phase 3: ストレージバックエンドの実装
 
@@ -136,12 +140,12 @@
    - Linux: libsecret（Secret Service API）
    - macOS: Keychain Services（Security.framework）
    - Windows: DPAPI（`CryptProtectData` / `CryptUnprotectData`）
-   - プラットフォーム判定は `Q_OS_LINUX`, `Q_OS_MACOS`, `Q_OS_WIN` を使用
+   - プラットフォーム判定は `__linux__`, `__APPLE__`, `_WIN32` を使用
 
 2. **FileBackend**
    - OSセキュアストレージが使えない環境のフォールバック
    - EMK をファイルに保存し、パーミッション `0600` を設定
-   - `QSaveFile` 等を使用して安全に書き込み
+   - `std::filesystem` と標準 C++ ストリームを使用し、一時ファイル → rename でアトミックに書き込み
 
 ### Phase 4: GUI とアプリケーション統合
 

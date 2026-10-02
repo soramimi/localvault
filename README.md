@@ -167,8 +167,8 @@ if (!vault.isSetup()) {
 vault.unlock(pin);
 
 // 機密データの暗号化/復号
-QByteArray secret = "API_KEY=sk-1234567890";
-QByteArray encrypted = vault.encrypt(secret);
+Blob secret = { 'A', 'P', 'I', '_', 'K', 'E', 'Y', '=', 's', 'k', '-', '1', '2', '3', '4', '5', '6', '7', '8', '9', '0' };
+Blob encrypted = vault.encrypt(secret);
 SecureBuffer decrypted = vault.decryptToSecureBuffer(encrypted);
 // 使用後は decrypted.clear() で明示的に消去
 
@@ -229,8 +229,9 @@ EMK のヘッダには Argon2id の opslimit / memlimit が記録される。デ
 
 SystemKeychainBackend backend;
 if (backend.isAvailable()) {
-    backend.store("my-key", QByteArray("encrypted-master-key-blob"));
-    QByteArray loaded = backend.load("my-key");
+    Blob data = { 'e', 'n', 'c', 'r', 'y', 'p', 't', 'e', 'd', '-', 'b', 'l', 'o', 'b' };
+    backend.store("my-key", data);
+    Blob loaded = backend.load("my-key");
     backend.remove("my-key");
 }
 ```

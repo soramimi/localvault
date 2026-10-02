@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <memory>
 
 #include "gui/PinDialog.h"
@@ -15,6 +16,28 @@
 #include "storage/SystemKeychainBackend.h"
 #include "vault/SecureBuffer.h"
 #include "vault/Vault.h"
+
+// ===== Qt / std conversion helpers =====
+
+static Blob QByteArrayToBlob(const QByteArray &ba)
+{
+	return Blob(ba.constData(), ba.constData() + ba.size());
+}
+
+static std::string QStringToStd(const QString &s)
+{
+	return s.toUtf8().toStdString();
+}
+
+static QString stdToQString(const std::string &s)
+{
+	return QString::fromUtf8(s.c_str(), static_cast<int>(s.size()));
+}
+
+static std::filesystem::path QStringToPath(const QString &s)
+{
+	return std::filesystem::path(QStringToStd(s));
+}
 
 // ===== Test harness =====
 
@@ -39,10 +62,16 @@ static SecureBuffer pinFromUtf8(const char *s)
 	return pin;
 }
 
-static bool secureBufferEquals(const SecureBuffer &buf, const QByteArray &ba)
+static bool secureBufferEquals(const SecureBuffer &buf, const Blob &blob)
 {
-	return buf.size() == static_cast<size_t>(ba.size())
-			 && QByteArray(reinterpret_cast<const char *>(buf.data()), static_cast<int>(buf.size())) == ba;
+	return buf.size() == blob.size()
+			 && std::equal(buf.begin(), buf.end(), blob.begin(), blob.end());
+}
+
+static bool blobEquals(const Blob &a, const QByteArray &b)
+{
+	return a.size() == static_cast<size_t>(b.size())
+			 && std::equal(a.begin(), a.end(), b.begin(), b.end());
 }
 
 static void testSecureBuffer()
@@ -62,7 +91,7 @@ static void testVaultSetupUnlock()
 	QTemporaryDir tempDir;
 	check(tempDir.isValid(), "Vault temp dir valid");
 	
-	FileBackend backend(tempDir.path());
+	FileBackend backend(QStringToPath(tempDir.path()));
 	Vault vault(&backend);
 	
 	check(vault.isAvailable(), "Vault backend available");
@@ -74,9 +103,9 @@ static void testVaultSetupUnlock()
 	check(vault.isSetup(), "Vault is setup after setup");
 	check(vault.isUnlocked(), "Vault is unlocked after setup");
 	
-	QByteArray secret = "API_KEY=sk-1234567890abcdef";
-	QByteArray encrypted = vault.encrypt(secret);
-	check(!encrypted.isEmpty(), "Vault encrypt");
+	Blob secret = QByteArrayToBlob("API_KEY=sk-1234567890abcdef");
+	Blob encrypted = vault.encrypt(secret);
+	check(!encrypted.empty(), "Vault encrypt");
 	check(encrypted != secret, "Vault encryption changes data");
 	
 	SecureBuffer decrypted = vault.decryptToSecureBuffer(encrypted);
@@ -94,7 +123,7 @@ static void testVaultSetupUnlock()
 static void testVaultWrongPin()
 {
 	QTemporaryDir tempDir;
-	FileBackend backend(tempDir.path());
+	FileBackend backend(QStringToPath(tempDir.path()));
 	Vault vault(&backend);
 	
 	SecureBuffer pin = pinFromUtf8("correct");
@@ -108,7 +137,7 @@ static void testVaultWrongPin()
 static void testVaultChangePin()
 {
 	QTemporaryDir tempDir;
-	FileBackend backend(tempDir.path());
+	FileBackend backend(QStringToPath(tempDir.path()));
 	Vault vault(&backend);
 	
 	SecureBuffer oldPin = pinFromUtf8("oldpin");
@@ -116,8 +145,8 @@ static void testVaultChangePin()
 	
 	check(vault.setup(oldPin), "Vault setup for PIN change");
 	
-	QByteArray secret = "SuperSecretToken";
-	QByteArray encrypted = vault.encrypt(secret);
+	Blob secret = QByteArrayToBlob("SuperSecretToken");
+	Blob encrypted = vault.encrypt(secret);
 	
 	check(vault.changePin(oldPin, newPin), "Vault change PIN");
 	check(vault.isUnlocked(), "Vault still unlocked after PIN change");
@@ -131,13 +160,13 @@ static void testVaultChangePin()
 static void testVaultReset()
 {
 	QTemporaryDir tempDir;
-	FileBackend backend(tempDir.path());
+	FileBackend backend(QStringToPath(tempDir.path()));
 	Vault vault(&backend);
 	
 	SecureBuffer oldPin = pinFromUtf8("oldpin");
 	SecureBuffer newPin = pinFromUtf8("newpin");
 	check(vault.setup(oldPin), "Vault setup for reset");
-	QByteArray oldCipher = vault.encrypt("OldSecret");
+	Blob oldCipher = vault.encrypt(QByteArrayToBlob("OldSecret"));
 	
 	check(vault.reset(newPin), "Vault reset");
 	check(vault.isUnlocked(), "Vault unlocked after reset");
@@ -151,17 +180,16 @@ static void testVaultReset()
 static void testVaultTamperedData()
 {
 	QTemporaryDir tempDir;
-	FileBackend backend(tempDir.path());
+	FileBackend backend(QStringToPath(tempDir.path()));
 	Vault vault(&backend);
 	
 	SecureBuffer pin = pinFromUtf8("1234");
 	check(vault.setup(pin), "Vault setup for tamper test");
 	
-	QByteArray secret = "TamperTestSecret";
-	QByteArray encrypted = vault.encrypt(secret);
+	Blob secret = QByteArrayToBlob("TamperTestSecret");
+	Blob encrypted = vault.encrypt(secret);
 	
-	char tampered = static_cast<char>(encrypted[encrypted.size() / 2] ^ 0xff);
-	encrypted[encrypted.size() / 2] = tampered;
+	encrypted[encrypted.size() / 2] ^= 0xff;
 	
 	check(vault.decryptToSecureBuffer(encrypted).empty(), "Vault detects tampered data");
 }
@@ -171,13 +199,13 @@ static void testFileBackendSanitization()
 	QTemporaryDir tempDir;
 	check(tempDir.isValid(), "FileBackend sanitization temp dir valid");
 	
-	FileBackend backend(tempDir.path());
-	QByteArray data = "test data";
+	FileBackend backend(QStringToPath(tempDir.path()));
+	Blob data = QByteArrayToBlob("test data");
 	
 	// 無害化が必要なキーで保存・読み出し
-	const QString dangerousKey = QStringLiteral("../<bad>:key|name?*");
+	const std::string dangerousKey = "../<bad>:key|name?*";
 	check(backend.store(dangerousKey, data), "FileBackend stores sanitized key");
-	check(backend.load(dangerousKey) == data, "FileBackend loads sanitized key");
+	check(blobEquals(backend.load(dangerousKey), "test data"), "FileBackend loads sanitized key");
 	check(backend.remove(dangerousKey), "FileBackend removes sanitized key");
 }
 
@@ -189,14 +217,14 @@ static void testSystemKeychainBackend()
 		return;
 	}
 	
-	const QString testKey = QStringLiteral("localvault-phase3-test");
-	QByteArray data = "EMK blob for system keychain test";
+	const std::string testKey = "localvault-phase3-test";
+	Blob data = QByteArrayToBlob("EMK blob for system keychain test");
 	
 	check(backend.store(testKey, data), "SystemKeychainBackend store");
-	QByteArray loaded = backend.load(testKey);
-	check(loaded == data, "SystemKeychainBackend load");
+	Blob loaded = backend.load(testKey);
+	check(blobEquals(loaded, "EMK blob for system keychain test"), "SystemKeychainBackend load");
 	check(backend.remove(testKey), "SystemKeychainBackend remove");
-	check(backend.load(testKey).isEmpty(), "SystemKeychainBackend removed");
+	check(backend.load(testKey).empty(), "SystemKeychainBackend removed");
 }
 
 static void testVaultWithSystemKeychain()
@@ -207,7 +235,7 @@ static void testVaultWithSystemKeychain()
 		return;
 	}
 	
-	const QString testKey = QStringLiteral("localvault-phase3-vault-test");
+	const std::string testKey = "localvault-phase3-vault-test";
 	backend.remove(testKey);
 	
 	Vault vault(&backend, testKey);
@@ -215,9 +243,9 @@ static void testVaultWithSystemKeychain()
 	
 	check(vault.setup(pin), "Vault setup with SystemKeychainBackend");
 	
-	QByteArray secret = "Secret stored via system keychain";
-	QByteArray encrypted = vault.encrypt(secret);
-	check(!encrypted.isEmpty(), "Vault encrypt with SystemKeychainBackend");
+	Blob secret = QByteArrayToBlob("Secret stored via system keychain");
+	Blob encrypted = vault.encrypt(secret);
+	check(!encrypted.empty(), "Vault encrypt with SystemKeychainBackend");
 	
 	vault.lock();
 	check(vault.unlock(pin), "Vault unlock with SystemKeychainBackend");
@@ -240,7 +268,7 @@ static int runTests()
 	testVaultReset();
 	testVaultTamperedData();
 	
-	std::printf("\n=== Phase 3: System Keychain Backend Tests ===\n");
+	std::printf("\n=== Phase 3: System Key Chain Backend Tests ===\n");
 	testSystemKeychainBackend();
 	testVaultWithSystemKeychain();
 	
@@ -259,7 +287,7 @@ static std::unique_ptr<ISecretStorageBackend> createBackend()
 	}
 	
 	const QString configDir = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
-	return std::make_unique<FileBackend>(configDir + "/emk");
+	return std::make_unique<FileBackend>(QStringToPath(configDir + "/emk"));
 }
 
 static int runCliReset()
@@ -356,13 +384,13 @@ static int runGuiDemo(int argc, char *argv[])
 		pin.clear();
 	}
 	
-	QByteArray secret = "API_KEY=sk-abcdef1234567890";
-	QByteArray encrypted = vault.encrypt(secret);
+	Blob secret = QByteArrayToBlob("API_KEY=sk-abcdef1234567890");
+	Blob encrypted = vault.encrypt(secret);
 	SecureBuffer decrypted = vault.decryptToSecureBuffer(encrypted);
 	
 	QString message;
 	if (secureBufferEquals(decrypted, secret)) {
-		message = QObject::tr("Vault unlocked and roundtrip verified successfully.\n\nDecrypted: %1").arg(QString::fromUtf8(reinterpret_cast<const char *>(decrypted.data()), static_cast<int>(decrypted.size())));
+		message = QObject::tr("Vault unlocked and roundtrip verified successfully.\n\nDecrypted: %1").arg(stdToQString(std::string(reinterpret_cast<const char *>(decrypted.data()), decrypted.size())));
 	} else {
 		message = QObject::tr("Vault roundtrip failed.");
 	}

@@ -19,6 +19,7 @@ class SecureBuffer {
 private:
 	std::vector<uint8_t> data_;
 	bool locked_ = false;
+
 public:
 	SecureBuffer() = default;
 	explicit SecureBuffer(size_t size);
@@ -27,36 +28,36 @@ public:
 	SecureBuffer(SecureBuffer &&other) noexcept;
 	SecureBuffer &operator=(SecureBuffer &&other) noexcept;
 	~SecureBuffer();
-	
+
 	SecureBuffer(const SecureBuffer &) = delete;
 	SecureBuffer &operator=(const SecureBuffer &) = delete;
-	
+
 	bool empty() const;
 	size_t size() const;
-	
+
 	uint8_t *data();
 	const uint8_t *data() const;
-	
+
 	uint8_t *begin();
 	const uint8_t *begin() const;
 	uint8_t *end();
 	const uint8_t *end() const;
-	
+
 	uint8_t &operator[](size_t index);
 	const uint8_t &operator[](size_t index) const;
-	
+
 	/** Structural changes are refused while the buffer is memory-locked. */
 	bool resize(size_t size);
 	void clear();
 	bool assign(const void *data, size_t size);
 	bool append(const void *data, size_t size);
-	
+
 	/**
 	 * @brief ページングファイルへの書き出しを防ぐためメモリをロックする
 	 * @return ロックに成功した場合 true
 	 */
 	bool lock();
-	
+
 	/**
 	 * @brief lock() でロックしたメモリを解除する
 	 */

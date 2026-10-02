@@ -15,6 +15,9 @@ msvc:CONFIG(release,debug|release) {
 	LIBS += -LC:/vcpkg/installed/x64-windows/lib
 }
 
+# GCC 7/8 では std::filesystem 用に -lstdc++fs が必要な場合がある
+# GCC 9+ では無害だが無視される
+linux-g++*:LIBS += -lstdc++fs
 
 HEADERS += \
 	../src/gui/PinDialog.h \
