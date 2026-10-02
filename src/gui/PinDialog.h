@@ -5,13 +5,15 @@
 #include <QDialog>
 #include <QString>
 
-class QLineEdit;
+namespace localvault {
+
+class SecurePinEdit;
 
 /**
  * @brief PIN 入力ダイアログ
  *
  * Vault の setup / unlock 時に使用する QtWidgets ダイアログ。
- * 入力はマスク表示される。
+ * 入力は SecurePinEdit で受け付け、QString を経由せず SecureBuffer に保持する。
  */
 class PinDialog : public QDialog {
 	Q_OBJECT
@@ -53,10 +55,14 @@ public:
 
 private:
 	Mode mode_;
-	QLineEdit *pinEdit_ = nullptr;
-	QLineEdit *confirmEdit_ = nullptr;
+	SecurePinEdit *pinEdit_ = nullptr;
+	SecurePinEdit *confirmEdit_ = nullptr;
 
+	void clearInput();
 	void accept() override;
+	void reject() override;
 };
+
+} // namespace localvault
 
 #endif // PINDIALOG_H

@@ -1,36 +1,62 @@
 #include "SecureBuffer.h"
 
+#include <new>
 #include <sodium.h>
+
+namespace localvault {
+
+namespace secure_memory {
+
+	void *allocate(size_t size)
+	{
+		static const bool ready = sodium_init() >= 0;
+		if (!ready) throw std::bad_alloc();
+		void *p = sodium_malloc(size == 0 ? 1 : size);
+		if (!p) throw std::bad_alloc();
+		return p;
+	}
+
+	void deallocate(void *p) noexcept
+	{
+		if (p) sodium_free(p);
+	}
+
+	void zero(void *p, size_t size) noexcept
+	{
+		if (p && size > 0) sodium_memzero(p, size);
+	}
+
+} // namespace secure_memory
 
 namespace {
 
-/**
- * @brief コンパイラの最適化を避けて確実にメモリをゼロクリアする
- */
-void secure_memzero(void *p, size_t n)
-{
-	if (!p || n == 0) {
-		return;
+	/**
+	 * @brief コンパイラの最適化を避けて確実にメモリをゼロクリアする
+	 */
+	void secure_memzero(void *p, size_t n)
+	{
+		if (!p || n == 0) {
+			return;
+		}
+
+		sodium_memzero(p, n);
 	}
 
-	sodium_memzero(p, n);
-}
-
-bool secure_lock(void *p, size_t n)
-{
-	if (!p || n == 0) {
-		return false;
+	bool secure_lock(void *p, size_t n)
+	{
+		if (!p || n == 0) {
+			return false;
+		}
+		return sodium_mlock(p, n) == 0;
 	}
-	return sodium_mlock(p, n) == 0;
-}
 
-bool secure_unlock(void *p, size_t n)
-{
-	if (!p || n == 0) {
-		return false;
+	bool secure_unlock(void *p, size_t n)
+	{
+		if (!p || n == 0) {
+			return false;
+		}
+		return sodium_munlock(p, n) == 0;
 	}
-	return sodium_munlock(p, n) == 0;
-}
 
 } // namespace
 
@@ -86,6 +112,12 @@ bool SecureBuffer::empty() const
 size_t SecureBuffer::size() const
 {
 	return data_.size();
+}
+
+bool SecureBuffer::equals(const SecureBuffer &other) const
+{
+	return data_.size() == other.data_.size()
+		&& (data_.empty() || sodium_memcmp(data_.data(), other.data_.data(), data_.size()) == 0);
 }
 
 uint8_t *SecureBuffer::data()
@@ -185,3 +217,5 @@ void SecureBuffer::unlock()
 	secure_unlock(data_.data(), data_.size());
 	locked_ = false;
 }
+
+} // namespace localvault

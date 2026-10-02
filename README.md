@@ -30,7 +30,7 @@
 ```
 
 - **MK（Master Key）**: ランダム 256bit。実際の機密データを暗号化
-- **KEK（Key Encryption Key）**: PIN からArgon2idで導出（opslimit 3、memlimit 64 MiB）
+- **KEK（Key Encryption Key）**: PIN からArgon2idで導出（opslimit 3、memlimit 256 MiB）
 - **EMK（Encrypted Master Key）**: KEK で XChaCha20-Poly1305 により認証付き暗号化された MK。セキュアストレージバックエンドに保存
 - PIN 変更時は EMK のみ再暗号化すればよく、全データの再暗号化は不要
 
@@ -63,15 +63,20 @@ localvault/
 │   └── localvault.pro          # Qt qmake プロジェクト
 └── src/
     ├── main.cpp                 # テストランナー / GUI デモ
-    ├── vault/                   # QtCore のみの Vault コア
+    ├── vault/                   # Qt 非依存の Vault コア
     │   ├── SecureBuffer.h/cpp
     │   ├── Vault.h/cpp
-    │   └── SecretStorage.h
-    ├── storage/                 # ストレージバックエンド
+    │   ├── SecretStorage.h
+    │   └── ProcessHardening.h/cpp
+    ├── storage/                 # ストレージバックエンド（Qt 非依存）
+    │   ├── AtomicFile.h/cpp
     │   ├── FileBackend.h/cpp
     │   └── SystemKeychainBackend.h/cpp
+    ├── app/                     # アプリケーション層（Qt 非依存）
+    │   └── BackendSelector.h/cpp
     └── gui/                     # GUI レイヤー（QtWidgets）
-        └── PinDialog.h/cpp
+        ├── PinDialog.h/cpp
+        └── SecurePinEdit.h/cpp
 ```
 
 ## ビルド手順
@@ -123,7 +128,7 @@ nmake  # または mingw32-make
 
 ### SecureBuffer
 
-機密データを保持するコンテナ。libsodiumで解放時にゼロクリアし、可能であればメモリロックを行う。ロック中は再配置を招く`resize`、`assign`、`append`を拒否する。
+機密データを保持するコンテナ。内部領域は `sodium_malloc`（ガードページ付き）で確保し、解放時・再確保時に旧領域をゼロクリアする。`lock()` で明示的にメモリロックでき、ロック中は再配置を招く`resize`、`assign`、`append`を拒否する。
 
 ```cpp
 #include "vault/SecureBuffer.h"
@@ -137,56 +142,82 @@ buf.clear();                                   // 明示的に消去
 
 ### Vault
 
-Vault は `ISecretStorageBackend` を通じて EMK を保存する。アプリ側でバックエンドを選択する。
+Vault は `ISecretStorageBackend` を通じて EMK を保存する。保存先は `BackendSelector` で選択・記録する。
+各操作は `VaultError` を返し、成功時は `VaultError::None`。すべてのクラス・関数は `namespace localvault` に属する（以下の例では `using namespace localvault;` を前提とする）。
 
 ```cpp
-#include "storage/SystemKeychainBackend.h"
-#include "storage/FileBackend.h"
+#include "app/BackendSelector.h"
 #include "vault/Vault.h"
 #include "vault/SecureBuffer.h"
 
-// バックエンドを選択：OSセキュアストレージ優先、不可ならファイルフォールバック
-std::unique_ptr<ISecretStorageBackend> backend;
-auto systemBackend = std::make_unique<SystemKeychainBackend>();
-if (systemBackend->isAvailable()) {
-    backend = std::move(systemBackend);
-} else {
-    backend = std::make_unique<FileBackend>("/path/to/emk/dir");
+// 保存先の選択：記録済みならその保存先のみ。未記録なら既存Vaultを探し、なければOSストレージを優先
+BackendSelector selector(configDir, "my-app-emk");
+BackendSelection sel = selector.select();
+switch (sel.status) {
+case BackendSelection::Status::Ok: break;
+case BackendSelection::Status::NeedsFileConsent: /* ユーザーの同意を得たら続行 */ break;
+case BackendSelection::Status::RecordedBackendUnavailable: /* 再試行を促す。他の保存先へ切り替えない */ return;
+case BackendSelection::Status::ConfigError: return;
 }
 
-Vault vault(backend.get(), "my-app-emk");
+Vault vault(sel.backend.get(), "my-app-emk");
 
-// 初回セットアップ
 SecureBuffer pin;
 pin.assign("1234", 4);
-if (!vault.isSetup()) {
-    vault.setup(pin);
+switch (vault.state()) {
+case VaultState::NotSetup:
+    if (vault.setup(pin) == VaultError::None && !sel.recorded) {
+        selector.record(sel.kind);   // セットアップ成功後に保存先を記録
+    }
+    break;
+case VaultState::Locked:
+    if (vault.unlock(pin) == VaultError::WrongPin) { /* 再入力 */ }
+    break;
+case VaultState::BackendUnavailable:
+case VaultState::StorageError:
+    // EMKの有無が不明。新規セットアップへ進まないこと
+    break;
+case VaultState::Unlocked:
+    break;
 }
 
-// 解除
-vault.unlock(pin);
+// 機密データの暗号化/復号（平文は SecureBuffer で渡し、通常メモリを経由させない）
+SecureBuffer secret;
+secret.assign("API_KEY", 7);
+Blob encrypted;
+if (vault.encrypt(secret, encrypted) == VaultError::None) {
+    SecureBuffer decrypted;
+    if (vault.decryptToSecureBuffer(encrypted, decrypted) == VaultError::None) {
+        // 使用後は decrypted.clear() で明示的に消去
+    }
+}
 
-// 機密データの暗号化/復号
-Blob secret = { 'A', 'P', 'I', '_', 'K', 'E', 'Y', '=', 's', 'k', '-', '1', '2', '3', '4', '5', '6', '7', '8', '9', '0' };
-Blob encrypted = vault.encrypt(secret);
-SecureBuffer decrypted = vault.decryptToSecureBuffer(encrypted);
-// 使用後は decrypted.clear() で明示的に消去
-
-// PIN 変更
+// PIN 変更（StorageError の場合、旧PIN・新PINのどちらかが有効）
 SecureBuffer newPin;
 newPin.assign("5678", 4);
-vault.changePin(pin, newPin);
+VaultError err = vault.changePin(pin, newPin);
 
-// 既存Vaultを破棄して新しいPINで再セットアップ（不可逆）
-vault.reset(newPin);
+// 新しいMKでEMKを置き換える（不可逆。旧暗号文は復号不能になる）
+err = vault.reset(newPin);
 
 // 使用後はロック
 vault.lock();
 ```
 
+`VaultError` の主な値:
+
+| 値 | 意味 |
+|---|---|
+| `WrongPin` | PIN の誤り（EMK 改ざんでも同じ結果） |
+| `BackendUnavailable` | ストレージに到達できない・ロックされている。リセットへ誘導しないこと |
+| `StorageError` | ストレージの読み書き・検証失敗 |
+| `CorruptedData` | 形式不正・未対応バージョン |
+| `AuthenticationFailed` | 暗号文の改ざん、または別のMKで暗号化されたデータ |
+| `MemoryLockFailed` | 鍵用メモリのロック失敗（`RLIMIT_MEMLOCK`） |
+
 ### PinDialog
 
-QtWidgets の PIN 入力ダイアログ。Vault から独立しており、`SecureBuffer` で PIN を返す。
+QtWidgets の PIN 入力ダイアログ。Vault から独立しており、`SecureBuffer` で PIN を返す。入力欄は `SecurePinEdit` で、入力を `QString` に保持せず `SecureBuffer` に直接格納する（IME・クリップボード・カーソル移動は無効）。
 
 ```cpp
 #include "gui/PinDialog.h"
@@ -195,13 +226,13 @@ QtWidgets の PIN 入力ダイアログ。Vault から独立しており、`Secu
 bool ok = false;
 SecureBuffer pin = PinDialog::setupPin(parent, &ok);
 if (ok) {
-    vault.setup(pin);
+    VaultError err = vault.setup(pin);
 }
 
 // 解除時
 SecureBuffer pin = PinDialog::requestPin(parent, &ok);
 if (ok) {
-    vault.unlock(pin);
+    VaultError err = vault.unlock(pin);
 }
 ```
 
@@ -211,15 +242,25 @@ EMK と暗号文には、magic、形式バージョン、レコード種別、�
 
 EMK のヘッダには Argon2id の opslimit / memlimit が記録される。デフォルトは opslimit 3、memlimit 256 MiB（libsodium の MODERATE 相当）である。PIN 変更時も新しい salt と共にこれらのパラメータが再設定される。
 
+### EMK の書き換え
+
+`setup()` / `changePin()` / `reset()` は、まず `<emkKey>.pending` に新EMKを書き込んで読み戻し検証し、その後で本キーを置き換える。本キーの置換に失敗しても旧EMK・新EMKのどちらかは必ず残り、旧PIN・新PINのどちらでも解除できる（新PINで解除した場合はステージングが本キーへ昇格し、旧PINで解除した場合はステージングが破棄される）。
+
 初期の試作版（ChaCha20 + HMAC、version 1）のEMKおよび暗号文とは互換性がない。試作版のデータを利用している場合は、その版で復号してから本版で再セットアップ・再暗号化すること。新規の`setup()`は既存EMKを上書きしない。
 
 ## Vaultのリセット
 
-リセットは既存EMKを削除し、新しいMKでVaultを作り直す不可逆操作である。旧MKで暗号化したデータは復号できなくなるため、必要なデータは先に復号・退避すること。
+リセットは新しいMKでVaultを作り直す不可逆操作である。新EMKの書き込みに成功するまで既存EMKは削除しない。旧MKで暗号化したデータは復号できなくなるため、必要なデータは先に復号・退避すること。
 
 - GUIでは、既存Vaultを検出した際に「Reset Vault」を選択し、警告確認後に新PINを設定する。
-- CLIでは`./localvault --reset --yes`を実行する。CLI操作はEMKを削除し、次の通常起動時にGUIで新規セットアップを行う。`--yes`なしでは何も削除しない。
-- アプリケーションコードからは`Vault::reset(const SecureBuffer &newPin)`を使用する。
+- CLIでは`./localvault --reset --yes`を実行する。CLI操作はEMKと保存先の記録を削除し、次の通常起動時にGUIで新規セットアップを行う。`--yes`なしでは何も削除しない。記録済みの保存先にアクセスできない場合は何も削除せず終了コード1を返す。
+- アプリケーションコードからは`Vault::reset(const SecureBuffer &newPin)`、または削除のみなら`Vault::destroy()`を使用する。
+
+## 保存先の選択
+
+`BackendSelector` は使用した保存先（`system` / `file`）を設定ディレクトリの `storage-backend` ファイルに記録し、以後はその保存先のみを使う。OSストレージが一時的に使えない（キーリングのロック、D-Bus未起動等）場合でも FileBackend へ切り替えず、再試行を求める。
+
+記録がない場合は、OSストレージ・ファイルの順に既存Vaultを探し、見つかればそれを採用・記録する（旧バージョンからの移行）。既存Vaultがなく、OSストレージも使えない場合は、GUIでPIN総当たりのリスクを説明した上でファイル保存への同意を求める。
 
 ### バックエンドの直接利用
 
@@ -230,8 +271,9 @@ EMK のヘッダには Argon2id の opslimit / memlimit が記録される。デ
 SystemKeychainBackend backend;
 if (backend.isAvailable()) {
     Blob data = { 'e', 'n', 'c', 'r', 'y', 'p', 't', 'e', 'd', '-', 'b', 'l', 'o', 'b' };
-    backend.store("my-key", data);
-    Blob loaded = backend.load("my-key");
+    backend.store("my-key", data);              // 既存データはアトミックに置き換えられる
+    Blob loaded;
+    StorageStatus status = backend.load("my-key", loaded);  // Ok / NotFound / Unavailable / Error
     backend.remove("my-key");
 }
 ```
@@ -253,10 +295,11 @@ if (backend.isAvailable()) {
 [GNOME Keyring / KDE Wallet / keepassxc-secret-service 等]
 ```
 
-- `secret_password_store_sync` でデフォルトコレクションに保存
+- `secret_password_store_sync` でデフォルトコレクションに保存（同じ属性の既存項目は置き換えられる）
 - 属性 `key` を使って項目を識別
-- 実行時に `isAvailable()` で Secret Service への接続可否を確認
-- デスクトップセッションでキーリングがロックされている場合、保存/読み出しに失敗する
+- `isAvailable()` は Secret Service への接続とコレクション一覧の取得のみを行い、解除ダイアログは出さない
+- 読み出しは `secret_password_search_sync` で行い、ロック中の項目も列挙する。解除ダイアログがキャンセルされ項目がロックされたままの場合は「存在しない」ではなく `Unavailable` を返す（既存 Vault を新規作成で上書きしないため）
+- キーリングがロックされている場合、保存/読み出し時に解除ダイアログが表示される
 
 ### macOS: Keychain Services
 
@@ -267,7 +310,7 @@ if (backend.isAvailable()) {
 [SystemKeychainBackend]
    ▼
 [Security.framework]
-   │ SecItemAdd / SecItemCopyMatching / SecItemDelete
+   │ SecItemUpdate（なければ SecItemAdd）/ SecItemCopyMatching / SecItemDelete
    ▼
 [macOS Keychain]
 ```
@@ -291,16 +334,24 @@ if (backend.isAvailable()) {
 
 - DPAPI で EMK を暗号化（保護対象は現在ログイン中のユーザー）
 - 暗号化済みバイナリを `%AppData%` 以下に保存
+- 一時ファイル → `MoveFileExW(REPLACE_EXISTING | WRITE_THROUGH)` でアトミックに置き換える
 - ファイルパーミッションは OS に委ねる（必要に応じて追加設定）
 - ログイン中のユーザーでないと復号できない
 
 ## セキュリティ上の注意
 
-- 本実装はあくまで実験・サンプルコードです。本番利用の前にセキュリティレビューを行ってください。
+- 本実装はあくまで実験・サンプルコードです。本番利用の前にセキュリティレビューを行ってください。未検証事項・未決定の仕様・既知の制限は `AGENTS.md` の「既知の課題・未決事項」を参照してください。
+- 機密データの暗号化には `encrypt(const SecureBuffer &, Blob &)` を使用してください。
+- Argon2id（約1秒・256 MiB）は呼び出しスレッドで実行されます。GUI アプリではワーカースレッドから呼び出してください。`Vault` はスレッドセーフではありません。
+- 同一ユーザーが複数インスタンスを同時に起動して PIN 変更等を行うことは想定していません。必要に応じてアプリ側で単一インスタンス制御を行ってください。
+- FileBackend で作成した Vault は、後から OS ストレージが使えるようになっても自動では移行されません。
 - KEKはArgon2id（opslimit 3、memlimit 256 MiB）で導出します。コストはEMKに格納され、受入値には上下限があります。
 - 復号には平文を通常メモリへコピーしない`decryptToSecureBuffer()`を使用してください。
-- `FileBackend` は OS セキュアストレージが使えない場合の最後の手段として位置づけてください。保存キーは英数字・`_`・`.`・`-` のみに無害化され、ディレクトリ・ファイルのパーミッションは可能な範囲で制限されます。
+- `FileBackend` は OS セキュアストレージが使えない場合に、PIN 総当たりのリスクを承知の上で使う代替手段です。書き込みは 0600 の一時ファイル → fsync → rename で行います。保存キーは英数字・`_`・`.`・`-` のみに無害化され、ディレクトリ・ファイルのパーミッションは可能な範囲で制限されます。
 - 復号後の機密情報は `SecureBuffer` で管理し、使用後は即座に消去してください。
+- アプリケーションの `main()` 冒頭で `hardenProcess()` を呼び、コアダンプを抑止してください（Linux では同一ユーザーからの ptrace アタッチも拒否されます）。
+- `SecureBuffer::unlock()` はロック解除と同時に内容をゼロクリアします。単独で呼ばず、`clear()` かデストラクタに任せてください。
+- PIN 入力欄（`SecurePinEdit`）は IME に対応していません。
 - 可能な限りメモリロック（`mlock` / `VirtualLock`）を利用し、スワップファイルへの漏洩を防いでください。
 - Windows ではテスト出力を表示するためコンソールサブシステムでビルドされます。リリース時は必要に応じて `qmake/localvault.pro` の `CONFIG += console` を削除してください。
 

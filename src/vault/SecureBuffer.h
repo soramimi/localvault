@@ -5,20 +5,75 @@
 #include <cstdint>
 #include <vector>
 
+class LocalVaultTest;
+
+namespace localvault {
+
+namespace secure_memory {
+
+	/** sodium_malloc で確保する。失敗時は std::bad_alloc を送出 */
+	void *allocate(size_t size);
+	/** sodium_free で解放する（ゼロクリア・ロック解除を伴う） */
+	void deallocate(void *p) noexcept;
+	/** 最適化で省略されないゼロクリア（スタック上の一時領域等に使う） */
+	void zero(void *p, size_t size) noexcept;
+
+	/**
+	 * @brief libsodium のガード付きメモリを使う STL アロケータ
+	 *
+	 * std::vector が再確保する際、古い領域は sodium_free によりゼロクリアされてから
+	 * 解放されるため、拡張時に機密データの断片がヒープに残らない。
+	 * 確保領域はガードページで保護され、ベストエフォートでメモリロックされる。
+	 */
+	template <typename T>
+	struct Allocator {
+		using value_type = T;
+
+		Allocator() noexcept = default;
+		template <typename U>
+		Allocator(const Allocator<U> &) noexcept { }
+
+		T *allocate(size_t n) { return static_cast<T *>(secure_memory::allocate(n * sizeof(T))); }
+		void deallocate(T *p, size_t) noexcept { secure_memory::deallocate(p); }
+
+		template <typename U>
+		bool operator==(const Allocator<U> &) const noexcept { return true; }
+		template <typename U>
+		bool operator!=(const Allocator<U> &) const noexcept { return false; }
+	};
+
+} // namespace secure_memory
+
 /**
  * @brief 機密情報を保持するためのセキュアメモリバッファ
  *
  * 通常の std::vector とは異なり、以下の特性を持つ:
- * - 解放時に確実にゼロクリア
+ * - 解放時・再確保時に確実にゼロクリア（libsodium のガード付きメモリを使用）
  * - 可能であればメモリをロックしてスワップアウトを防止
  * - コピー禁止（ムーブのみ可）
- *
- * Qt 依存なし。QtCore の QByteArray との変換は呼び出し側で行う。
  */
 class SecureBuffer {
+	friend class Vault;
+	friend class SecurePinEdit;
+	friend class ::LocalVaultTest;
+
 private:
-	std::vector<uint8_t> data_;
+	std::vector<uint8_t, secure_memory::Allocator<uint8_t>> data_;
 	bool locked_ = false;
+
+	/**
+	 * @brief ページングファイルへの書き出しを防ぐためメモリをロックする
+	 * @return ロックに成功した場合 true
+	 */
+	bool lock();
+
+	/**
+	 * @brief lock() でロックしたメモリを解除する
+	 *
+	 * 注意: sodium_munlock の仕様により、ロック解除と同時に内容はゼロクリアされる。
+	 * サイズは変わらないが、以後の内容はすべて 0 になる。
+	 */
+	void unlock();
 
 public:
 	SecureBuffer() = default;
@@ -34,6 +89,9 @@ public:
 
 	bool empty() const;
 	size_t size() const;
+
+	/** 内容が等しいかを定数時間で比較する（サイズが異なる場合は false） */
+	bool equals(const SecureBuffer &other) const;
 
 	uint8_t *data();
 	const uint8_t *data() const;
@@ -51,17 +109,8 @@ public:
 	void clear();
 	bool assign(const void *data, size_t size);
 	bool append(const void *data, size_t size);
-
-	/**
-	 * @brief ページングファイルへの書き出しを防ぐためメモリをロックする
-	 * @return ロックに成功した場合 true
-	 */
-	bool lock();
-
-	/**
-	 * @brief lock() でロックしたメモリを解除する
-	 */
-	void unlock();
 };
+
+} // namespace localvault
 
 #endif // SECUREBUFFER_H

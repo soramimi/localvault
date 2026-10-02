@@ -5,6 +5,8 @@
 #include <filesystem>
 #include <string>
 
+namespace localvault {
+
 /**
  * @brief ファイルベースのセキュアストレージバックエンド
  *
@@ -12,7 +14,7 @@
  * EMK をローカルファイルに保存し、可能な限り 0600 等の厳格な
  * パーミッションを設定する。
  *
- * Qt 非依存。std::filesystem::path と標準 C++ ライブラリで実装。
+ * std::filesystem::path と標準 C++ ライブラリで実装。
  */
 class FileBackend : public ISecretStorageBackend {
 public:
@@ -20,9 +22,9 @@ public:
 
 	bool isAvailable() const override;
 	std::string name() const override;
-	bool store(const std::string &key, const Blob &data) override;
-	Blob load(const std::string &key) override;
-	bool remove(const std::string &key) override;
+	StorageStatus store(const std::string &key, const Blob &data) override;
+	StorageStatus load(const std::string &key, Blob &out) override;
+	StorageStatus remove(const std::string &key) override;
 
 private:
 	std::filesystem::path directory_;
@@ -31,5 +33,7 @@ private:
 	static std::string sanitizeKey(const std::string &key);
 	static std::filesystem::path defaultConfigDirectory();
 };
+
+} // namespace localvault
 
 #endif // FILEBACKEND_H

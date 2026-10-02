@@ -1,14 +1,12 @@
 #include "FileBackend.h"
+#include "AtomicFile.h"
 
 #include <cstdlib>
 #include <filesystem>
-#include <fstream>
-#include <random>
-#include <sstream>
+#include <system_error>
 
 #if defined(__unix__) || defined(__APPLE__)
 #include <sys/stat.h>
-#include <unistd.h>
 #endif
 
 #if defined(_WIN32)
@@ -16,25 +14,7 @@
 #include <windows.h>
 #endif
 
-namespace {
-
-std::string generateTempSuffix()
-{
-	std::random_device rd;
-	std::uniform_int_distribution<uint32_t> dist;
-	std::ostringstream oss;
-	oss << ".tmp" << std::hex << dist(rd);
-	return oss.str();
-}
-
-#if defined(__unix__) || defined(__APPLE__)
-bool setUnixPermissions(const std::filesystem::path &path, mode_t mode)
-{
-	return chmod(path.c_str(), mode) == 0;
-}
-#endif
-
-} // namespace
+namespace localvault {
 
 FileBackend::FileBackend(const std::filesystem::path &directory)
 {
@@ -118,87 +98,33 @@ std::filesystem::path FileBackend::filePathForKey(const std::string &key) const
 
 static bool ensureDirectory(const std::filesystem::path &directory)
 {
-	try {
-		std::filesystem::create_directories(directory);
-	} catch (...) {
-		return false;
-	}
-#if defined(__unix__) || defined(__APPLE__)
-	setUnixPermissions(directory, S_IRUSR | S_IWUSR | S_IXUSR);
-#endif
-	return std::filesystem::is_directory(directory);
-}
-
-bool FileBackend::store(const std::string &key, const Blob &data)
-{
-	if (!ensureDirectory(directory_)) {
-		return false;
-	}
-
-	const std::filesystem::path path = filePathForKey(key);
-	const std::filesystem::path tempPath = path.string() + generateTempSuffix();
-
-	{
-		std::ofstream file(tempPath, std::ios::binary | std::ios::trunc);
-		if (!file) {
-			std::error_code ec;
-			std::filesystem::remove(tempPath, ec);
-			return false;
-		}
-		if (!data.empty()) {
-			file.write(data.data(), static_cast<std::streamsize>(data.size()));
-		}
-		if (!file) {
-			std::error_code ec;
-			std::filesystem::remove(tempPath, ec);
-			return false;
-		}
-		file.flush();
-	}
-
 	std::error_code ec;
-	std::filesystem::rename(tempPath, path, ec);
-	if (ec) {
-		std::error_code removeEc;
-		std::filesystem::remove(tempPath, removeEc);
+	std::filesystem::create_directories(directory, ec);
+	if (ec || !std::filesystem::is_directory(directory, ec)) {
 		return false;
 	}
-
 #if defined(__unix__) || defined(__APPLE__)
-	setUnixPermissions(path, S_IRUSR | S_IWUSR);
+	chmod(directory.c_str(), S_IRUSR | S_IWUSR | S_IXUSR);
 #endif
-
 	return true;
 }
 
-Blob FileBackend::load(const std::string &key)
+StorageStatus FileBackend::store(const std::string &key, const Blob &data)
 {
-	const std::filesystem::path path = filePathForKey(key);
-	if (!std::filesystem::is_regular_file(path)) {
-		return { };
+	if (!ensureDirectory(directory_)) {
+		return StorageStatus::Error;
 	}
-
-	std::ifstream file(path, std::ios::binary | std::ios::ate);
-	if (!file) {
-		return { };
-	}
-
-	const auto size = file.tellg();
-	if (size < 0) {
-		return { };
-	}
-	file.seekg(0, std::ios::beg);
-
-	Blob data(static_cast<size_t>(size));
-	if (size > 0 && !file.read(data.data(), size)) {
-		return { };
-	}
-	return data;
+	return AtomicFile::write(filePathForKey(key), data);
 }
 
-bool FileBackend::remove(const std::string &key)
+StorageStatus FileBackend::load(const std::string &key, Blob &out)
 {
-	const std::filesystem::path path = filePathForKey(key);
-	std::error_code ec;
-	return std::filesystem::remove(path, ec);
+	return AtomicFile::read(filePathForKey(key), out);
 }
+
+StorageStatus FileBackend::remove(const std::string &key)
+{
+	return AtomicFile::remove(filePathForKey(key));
+}
+
+} // namespace localvault

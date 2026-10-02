@@ -1,28 +1,11 @@
 #include "PinDialog.h"
+#include "SecurePinEdit.h"
 
 #include <QDialogButtonBox>
 #include <QFormLayout>
-#include <QLineEdit>
 #include <QMessageBox>
-#include <algorithm>
 
-namespace {
-
-void secureClear(QByteArray &ba)
-{
-	if (!ba.isEmpty()) {
-		std::fill(ba.begin(), ba.end(), 0);
-	}
-}
-
-void secureClear(QString &s)
-{
-	if (!s.isEmpty()) {
-		std::fill(s.begin(), s.end(), QChar());
-	}
-}
-
-} // namespace
+namespace localvault {
 
 PinDialog::PinDialog(Mode mode, QWidget *parent)
 	: QDialog(parent)
@@ -32,14 +15,12 @@ PinDialog::PinDialog(Mode mode, QWidget *parent)
 
 	QFormLayout *formLayout = new QFormLayout(this);
 
-	pinEdit_ = new QLineEdit(this);
-	pinEdit_->setEchoMode(QLineEdit::Password);
+	pinEdit_ = new SecurePinEdit(this);
 	pinEdit_->setMaxLength(64);
 	formLayout->addRow(mode == Mode::Setup ? tr("New PIN:") : tr("PIN:"), pinEdit_);
 
 	if (mode == Mode::Setup) {
-		confirmEdit_ = new QLineEdit(this);
-		confirmEdit_->setEchoMode(QLineEdit::Password);
+		confirmEdit_ = new SecurePinEdit(this);
 		confirmEdit_->setMaxLength(64);
 		formLayout->addRow(tr("Confirm PIN:"), confirmEdit_);
 	}
@@ -50,44 +31,44 @@ PinDialog::PinDialog(Mode mode, QWidget *parent)
 	formLayout->addRow(buttons);
 
 	setLayout(formLayout);
+	pinEdit_->setFocus();
 }
 
-PinDialog::~PinDialog()
+PinDialog::~PinDialog() = default;
+
+SecureBuffer PinDialog::pin() const
 {
-	if (pinEdit_) {
-		pinEdit_->clear();
-	}
+	return pinEdit_->pin();
+}
+
+void PinDialog::clearInput()
+{
+	pinEdit_->clear();
 	if (confirmEdit_) {
 		confirmEdit_->clear();
 	}
 }
 
-SecureBuffer PinDialog::pin() const
-{
-	SecureBuffer result;
-	QString text = pinEdit_->text();
-	QByteArray utf8 = text.toUtf8();
-	result.assign(utf8.constData(), utf8.size());
-	result.lock();
-	secureClear(utf8);
-	secureClear(text);
-	return result;
-}
-
 void PinDialog::accept()
 {
-	if (mode_ == Mode::Setup && confirmEdit_) {
-		if (pinEdit_->text() != confirmEdit_->text()) {
-			QMessageBox::warning(this, tr("PIN Mismatch"), tr("The two PINs do not match."));
-			return;
-		}
-		if (pinEdit_->text().isEmpty()) {
-			QMessageBox::warning(this, tr("Invalid PIN"), tr("PIN cannot be empty."));
-			return;
-		}
+	if (pinEdit_->isEmpty()) {
+		QMessageBox::warning(this, tr("Invalid PIN"), tr("PIN cannot be empty."));
+		return;
+	}
+	if (mode_ == Mode::Setup && confirmEdit_ && !pinEdit_->equals(*confirmEdit_)) {
+		QMessageBox::warning(this, tr("PIN Mismatch"), tr("The two PINs do not match."));
+		clearInput();
+		pinEdit_->setFocus();
+		return;
 	}
 
 	QDialog::accept();
+}
+
+void PinDialog::reject()
+{
+	clearInput();
+	QDialog::reject();
 }
 
 SecureBuffer PinDialog::requestPin(QWidget *parent, bool *ok)
@@ -115,3 +96,5 @@ SecureBuffer PinDialog::setupPin(QWidget *parent, bool *ok)
 	}
 	return SecureBuffer();
 }
+
+} // namespace localvault
