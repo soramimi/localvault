@@ -19,43 +19,7 @@ msvc:CONFIG(release,debug|release) {
 # GCC 9+ では無害だが無視される
 linux-g++*:LIBS += -lstdc++fs
 
-HEADERS += \
-	../src/app/BackendSelector.h \
-	../src/gui/PinDialog.h \
-	../src/gui/SecurePinEdit.h \
-	../src/vault/ProcessHardening.h \
-	../src/vault/SecretStorage.h \
-	../src/vault/SecureBuffer.h \
-	../src/vault/Vault.h \
-	../src/storage/AtomicFile.h \
-	../src/storage/FileBackend.h \
-	../src/storage/SystemKeychainBackend.h
+SOURCES += ../src/main.cpp
 
-SOURCES += \
-	../src/app/BackendSelector.cpp \
-	../src/gui/PinDialog.cpp \
-	../src/gui/SecurePinEdit.cpp \
-	../src/vault/ProcessHardening.cpp \
-	../src/vault/SecureBuffer.cpp \
-	../src/vault/Vault.cpp \
-	../src/storage/AtomicFile.cpp \
-	../src/storage/FileBackend.cpp \
-	../src/storage/SystemKeychainBackend.cpp \
-	../src/main.cpp
-
-linux {
-	PKGCONFIG += libsecret-1
-	PKGCONFIG += libsodium
-}
-macx {
-	LIBS += -framework Security -framework CoreFoundation
-}
-win32 {
-	LIBS += -lcrypt32 -llibsodium
-	# テスト出力をコンソールに表示するため（GUI デモ時もコンソールウィンドウが表示される）
-	CONFIG += console
-}
-
-DISTFILES += \
-	../AGENTS.md \
-	../README.md
+LOCALVAULT_SRC = $$PWD/../src
+include(localvault.pri)
