@@ -22,15 +22,15 @@ public:
 
 	bool isAvailable() const override;
 	std::string name() const override;
-	StorageStatus store(const std::string &key, const Blob &data) override;
-	StorageStatus load(const std::string &key, Blob &out) override;
-	StorageStatus remove(const std::string &key) override;
+	StorageStatus store(std::string const &key, Blob const &data) override;
+	StorageStatus load(std::string const &key, Blob *out) override;
+	StorageStatus remove(std::string const &key) override;
 
 private:
 	std::filesystem::path directory_;
 
-	std::filesystem::path filePathForKey(const std::string &key) const;
-	static std::string sanitizeKey(const std::string &key);
+	std::filesystem::path filePathForKey(std::string const &key) const;
+	static std::string sanitizeKey(std::string const &key);
 	static std::filesystem::path defaultConfigDirectory();
 };
 

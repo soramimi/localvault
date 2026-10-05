@@ -25,21 +25,17 @@ namespace secure_memory {
 	 * 解放されるため、拡張時に機密データの断片がヒープに残らない。
 	 * 確保領域はガードページで保護され、ベストエフォートでメモリロックされる。
 	 */
-	template <typename T>
-	struct Allocator {
+	template <typename T> struct Allocator {
 		using value_type = T;
 
 		Allocator() noexcept = default;
-		template <typename U>
-		Allocator(const Allocator<U> &) noexcept { }
+		template <typename U> Allocator(Allocator<U> const &) noexcept { }
 
 		T *allocate(size_t n) { return static_cast<T *>(secure_memory::allocate(n * sizeof(T))); }
 		void deallocate(T *p, size_t) noexcept { secure_memory::deallocate(p); }
 
-		template <typename U>
-		bool operator==(const Allocator<U> &) const noexcept { return true; }
-		template <typename U>
-		bool operator!=(const Allocator<U> &) const noexcept { return false; }
+		template <typename U> bool operator==(Allocator<U> const &) const noexcept { return true; }
+		template <typename U> bool operator!=(Allocator<U> const &) const noexcept { return false; }
 	};
 
 } // namespace secure_memory
@@ -78,28 +74,28 @@ private:
 public:
 	SecureBuffer() = default;
 	explicit SecureBuffer(size_t size);
-	SecureBuffer(const void *data, size_t size);
-	SecureBuffer(const uint8_t *begin, const uint8_t *end);
+	SecureBuffer(void const *data, size_t size);
+	SecureBuffer(uint8_t const *begin, uint8_t const *end);
 	SecureBuffer(SecureBuffer &&other) noexcept;
 	SecureBuffer &operator=(SecureBuffer &&other) noexcept;
 	~SecureBuffer();
 
-	SecureBuffer(const SecureBuffer &) = delete;
-	SecureBuffer &operator=(const SecureBuffer &) = delete;
+	SecureBuffer(SecureBuffer const &) = delete;
+	SecureBuffer &operator=(SecureBuffer const &) = delete;
 
 	bool empty() const;
 	size_t size() const;
 
 	/** 内容が等しいかを定数時間で比較する（サイズが異なる場合は false） */
-	bool equals(const SecureBuffer &other) const;
+	bool equals(SecureBuffer const &other) const;
 
 	uint8_t *data();
-	const uint8_t *data() const;
+	uint8_t const *data() const;
 
 	uint8_t *begin();
-	const uint8_t *begin() const;
+	uint8_t const *begin() const;
 	uint8_t *end();
-	const uint8_t *end() const;
+	uint8_t const *end() const;
 
 	uint8_t &operator[](size_t index);
 	const uint8_t &operator[](size_t index) const;
@@ -107,8 +103,8 @@ public:
 	/** Structural changes are refused while the buffer is memory-locked. */
 	bool resize(size_t size);
 	void clear();
-	bool assign(const void *data, size_t size);
-	bool append(const void *data, size_t size);
+	bool assign(void const *data, size_t size);
+	bool append(void const *data, size_t size);
 };
 
 } // namespace localvault

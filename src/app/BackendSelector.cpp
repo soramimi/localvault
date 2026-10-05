@@ -37,9 +37,10 @@ std::unique_ptr<ISecretStorageBackend> BackendSelector::create(BackendKind kind)
 	return systemFactory_();
 }
 
-bool BackendSelector::hasVault(ISecretStorageBackend &backend) const
+bool BackendSelector::hasVault(ISecretStorageBackend *backend) const
 {
-	return Vault(&backend, emkKey_).state() == VaultState::Locked;
+	if (!backend) return false;
+	return Vault(backend, emkKey_).state() == VaultState::Locked;
 }
 
 StorageStatus BackendSelector::record(BackendKind kind) const
@@ -58,7 +59,7 @@ BackendSelection BackendSelector::select() const
 	BackendSelection result;
 
 	Blob marker;
-	const StorageStatus markerStatus = FileBackend(configDir_).load(MARKER_KEY, marker);
+	const StorageStatus markerStatus = FileBackend(configDir_).load(MARKER_KEY, &marker);
 	if (markerStatus == StorageStatus::Ok) {
 		std::string value(marker.begin(), marker.end());
 		while (!value.empty() && (value.back() == '\n' || value.back() == '\r'))
@@ -87,12 +88,12 @@ BackendSelection BackendSelector::select() const
 	// 記録なし: 既存 Vault を探す（旧バージョンからの移行を含む）
 	auto system = create(BackendKind::System);
 	const bool systemAvailable = system->isAvailable();
-	if (systemAvailable && hasVault(*system)) {
+	if (systemAvailable && hasVault(system.get())) {
 		result.kind = BackendKind::System;
 		result.backend = std::move(system);
 	} else {
 		auto file = create(BackendKind::File);
-		if (hasVault(*file)) {
+		if (hasVault(file.get())) {
 			result.kind = BackendKind::File;
 			result.backend = std::move(file);
 		} else if (systemAvailable) {

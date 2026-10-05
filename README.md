@@ -254,7 +254,7 @@ EMK のヘッダには Argon2id の opslimit / memlimit が記録される。デ
 
 - GUIでは、既存Vaultを検出した際に「Reset Vault」を選択し、警告確認後に新PINを設定する。
 - CLIでは`./localvault --reset --yes`を実行する。CLI操作はEMKと保存先の記録を削除し、次の通常起動時にGUIで新規セットアップを行う。`--yes`なしでは何も削除しない。記録済みの保存先にアクセスできない場合は何も削除せず終了コード1を返す。
-- アプリケーションコードからは`Vault::reset(const SecureBuffer &newPin)`、または削除のみなら`Vault::destroy()`を使用する。
+- アプリケーションコードからは`Vault::reset(SecureBuffer const &newPin)`、または削除のみなら`Vault::destroy()`を使用する。
 
 ## 保存先の選択
 
@@ -341,7 +341,7 @@ if (backend.isAvailable()) {
 ## セキュリティ上の注意
 
 - 本実装はあくまで実験・サンプルコードです。本番利用の前にセキュリティレビューを行ってください。未検証事項・未決定の仕様・既知の制限は `AGENTS.md` の「既知の課題・未決事項」を参照してください。
-- 機密データの暗号化には `encrypt(const SecureBuffer &, Blob &)` を使用してください。
+- 機密データの暗号化には `encrypt(SecureBuffer const &, Blob *)` を使用してください。
 - Argon2id（約1秒・256 MiB）は呼び出しスレッドで実行されます。GUI アプリではワーカースレッドから呼び出してください。`Vault` はスレッドセーフではありません。
 - 同一ユーザーが複数インスタンスを同時に起動して PIN 変更等を行うことは想定していません。必要に応じてアプリ側で単一インスタンス制御を行ってください。
 - FileBackend で作成した Vault は、後から OS ストレージが使えるようになっても自動では移行されません。

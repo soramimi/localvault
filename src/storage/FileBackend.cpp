@@ -35,7 +35,7 @@ std::string FileBackend::name() const
 	return "file";
 }
 
-std::string FileBackend::sanitizeKey(const std::string &key)
+std::string FileBackend::sanitizeKey(std::string const &key)
 {
 	// ファイル名として許可する文字は英数字、ドット、ハイフン、アンダースコアのみ
 	std::string safe;
@@ -91,7 +91,7 @@ std::filesystem::path FileBackend::defaultConfigDirectory()
 #endif
 }
 
-std::filesystem::path FileBackend::filePathForKey(const std::string &key) const
+std::filesystem::path FileBackend::filePathForKey(std::string const &key) const
 {
 	return directory_ / sanitizeKey(key);
 }
@@ -109,7 +109,7 @@ static bool ensureDirectory(const std::filesystem::path &directory)
 	return true;
 }
 
-StorageStatus FileBackend::store(const std::string &key, const Blob &data)
+StorageStatus FileBackend::store(std::string const &key, Blob const &data)
 {
 	if (!ensureDirectory(directory_)) {
 		return StorageStatus::Error;
@@ -117,12 +117,12 @@ StorageStatus FileBackend::store(const std::string &key, const Blob &data)
 	return AtomicFile::write(filePathForKey(key), data);
 }
 
-StorageStatus FileBackend::load(const std::string &key, Blob &out)
+StorageStatus FileBackend::load(std::string const &key, Blob *out)
 {
 	return AtomicFile::read(filePathForKey(key), out);
 }
 
-StorageStatus FileBackend::remove(const std::string &key)
+StorageStatus FileBackend::remove(std::string const &key)
 {
 	return AtomicFile::remove(filePathForKey(key));
 }

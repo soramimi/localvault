@@ -65,12 +65,12 @@ SecureBuffer::SecureBuffer(size_t size)
 {
 }
 
-SecureBuffer::SecureBuffer(const void *data, size_t size)
-	: data_(static_cast<const uint8_t *>(data), static_cast<const uint8_t *>(data) + size)
+SecureBuffer::SecureBuffer(void const *data, size_t size)
+	: data_(static_cast<uint8_t const *>(data), static_cast<uint8_t const *>(data) + size)
 {
 }
 
-SecureBuffer::SecureBuffer(const uint8_t *begin, const uint8_t *end)
+SecureBuffer::SecureBuffer(uint8_t const *begin, uint8_t const *end)
 	: data_(begin, end)
 {
 }
@@ -114,7 +114,7 @@ size_t SecureBuffer::size() const
 	return data_.size();
 }
 
-bool SecureBuffer::equals(const SecureBuffer &other) const
+bool SecureBuffer::equals(SecureBuffer const &other) const
 {
 	return data_.size() == other.data_.size()
 		&& (data_.empty() || sodium_memcmp(data_.data(), other.data_.data(), data_.size()) == 0);
@@ -125,7 +125,7 @@ uint8_t *SecureBuffer::data()
 	return data_.data();
 }
 
-const uint8_t *SecureBuffer::data() const
+uint8_t const *SecureBuffer::data() const
 {
 	return data_.data();
 }
@@ -135,7 +135,7 @@ uint8_t *SecureBuffer::begin()
 	return data_.data();
 }
 
-const uint8_t *SecureBuffer::begin() const
+uint8_t const *SecureBuffer::begin() const
 {
 	return data_.data();
 }
@@ -145,7 +145,7 @@ uint8_t *SecureBuffer::end()
 	return data_.data() + data_.size();
 }
 
-const uint8_t *SecureBuffer::end() const
+uint8_t const *SecureBuffer::end() const
 {
 	return data_.data() + data_.size();
 }
@@ -180,22 +180,22 @@ void SecureBuffer::clear()
 	data_.clear();
 }
 
-bool SecureBuffer::assign(const void *data, size_t size)
+bool SecureBuffer::assign(void const *data, size_t size)
 {
 	if (locked_) {
 		return false;
 	}
 	secure_memzero(data_.data(), data_.size());
-	data_.assign(static_cast<const uint8_t *>(data), static_cast<const uint8_t *>(data) + size);
+	data_.assign(static_cast<uint8_t const *>(data), static_cast<uint8_t const *>(data) + size);
 	return true;
 }
 
-bool SecureBuffer::append(const void *data, size_t size)
+bool SecureBuffer::append(void const *data, size_t size)
 {
 	if (locked_) {
 		return false;
 	}
-	const uint8_t *begin = static_cast<const uint8_t *>(data);
+	uint8_t const *begin = static_cast<uint8_t const *>(data);
 	data_.insert(data_.end(), begin, begin + size);
 	return true;
 }

@@ -28,7 +28,7 @@ namespace localvault {
 
 namespace {
 
-	std::string base64Encode(const Blob &data)
+	std::string base64Encode(Blob const &data)
 	{
 		static const char alphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 		std::string out;
@@ -48,7 +48,7 @@ namespace {
 		return out;
 	}
 
-	Blob base64Decode(const std::string &in)
+	Blob base64Decode(std::string const &in)
 	{
 		static const int decodeTable[256] = {
 			-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
@@ -101,13 +101,22 @@ class SystemKeychainBackend::Impl {
 public:
 	Impl()
 	{
-		schema_.name = "com.example.localvault.Vault";
+		schemaName_ = "com.example.localvault.Vault";
+		schema_.name = schemaName_.c_str();
 		schema_.flags = SECRET_SCHEMA_NONE;
 		schema_.attributes[0].name = "key";
 		schema_.attributes[0].type = SECRET_SCHEMA_ATTRIBUTE_STRING;
 		schema_.attributes[1].name = nullptr;
 		schema_.attributes[1].type = SecretSchemaAttributeType(0);
 	}
+
+	void setSchemaName(std::string const &schemaName)
+	{
+		schemaName_ = schemaName;
+		schema_.name = schemaName_.c_str();
+	}
+
+	void setServiceName(std::string const &) {}
 
 	bool isAvailable() const
 	{
@@ -125,7 +134,7 @@ public:
 		return service != nullptr;
 	}
 
-	StorageStatus store(const std::string &key, const Blob &data)
+	StorageStatus store(std::string const &key, Blob const &data)
 	{
 		// 同じ属性の項目が既にあれば libsecret が置き換える。
 		// 事前に remove() すると、保存失敗時に既存の EMK を失うため行わない
@@ -150,9 +159,10 @@ public:
 		return ok ? StorageStatus::Ok : StorageStatus::Error;
 	}
 
-	StorageStatus load(const std::string &key, Blob &out)
+	StorageStatus load(std::string const &key, Blob *out)
 	{
-		out.clear();
+		if (!out) return StorageStatus::Error;
+		out->clear();
 		// secret_password_lookup_sync は、ロック中の項目の解除ダイアログをユーザーが閉じると
 		// エラーなしで NULL を返し「項目なし」と区別できない。それを NotFound と誤認すると
 		// 新規セットアップへ進み既存 EMK を上書きしかねないため、SECRET_SEARCH_ALL で
@@ -191,8 +201,8 @@ public:
 			} else {
 				gsize length = 0;
 				const gchar *text = secret_value_get(value, &length);
-				out = base64Decode(std::string(text, length));
-				if (length > 0 && out.empty()) {
+				*out = base64Decode(std::string(text, length));
+				if (length > 0 && out->empty()) {
 					status = StorageStatus::Error;
 				}
 				secret_value_unref(value);
@@ -202,7 +212,7 @@ public:
 		return status;
 	}
 
-	StorageStatus remove(const std::string &key)
+	StorageStatus remove(std::string const &key)
 	{
 		GError *error = nullptr;
 		const gboolean removed = secret_password_clear_sync(
@@ -221,6 +231,7 @@ public:
 
 private:
 	SecretSchema schema_;
+	std::string schemaName_;
 };
 
 #elif defined(__APPLE__)
@@ -232,7 +243,14 @@ public:
 		return true;
 	}
 
-	StorageStatus store(const std::string &key, const Blob &data)
+	void setSchemaName(std::string const &) {}
+
+	void setServiceName(std::string const &serviceName)
+	{
+		serviceName_ = serviceName;
+	}
+
+	StorageStatus store(std::string const &key, Blob const &data)
 	{
 		// 既存項目は SecItemUpdate で置き換える。
 		// 事前に削除すると、追加失敗時に既存の EMK を失うため行わない
@@ -240,18 +258,18 @@ public:
 		CFStringRef account = CFStringCreateWithCString(nullptr, key.c_str(), kCFStringEncodingUTF8);
 		CFDataRef value = CFDataCreate(nullptr, reinterpret_cast<const UInt8 *>(data.data()), static_cast<CFIndex>(data.size()));
 
-		const void *queryKeys[] = { kSecClass, kSecAttrService, kSecAttrAccount };
-		const void *queryValues[] = { kSecClassGenericPassword, service, account };
+		void const *queryKeys[] = { kSecClass, kSecAttrService, kSecAttrAccount };
+		void const *queryValues[] = { kSecClassGenericPassword, service, account };
 		CFDictionaryRef query = CFDictionaryCreate(nullptr, queryKeys, queryValues, 3, nullptr, nullptr);
 
-		const void *updateKeys[] = { kSecValueData };
-		const void *updateValues[] = { value };
+		void const *updateKeys[] = { kSecValueData };
+		void const *updateValues[] = { value };
 		CFDictionaryRef update = CFDictionaryCreate(nullptr, updateKeys, updateValues, 1, nullptr, nullptr);
 
 		OSStatus status = SecItemUpdate(query, update);
 		if (status == errSecItemNotFound) {
-			const void *addKeys[] = { kSecClass, kSecAttrService, kSecAttrAccount, kSecValueData, kSecAttrAccessible };
-			const void *addValues[] = { kSecClassGenericPassword, service, account, value, kSecAttrAccessibleWhenUnlockedThisDeviceOnly };
+			void const *addKeys[] = { kSecClass, kSecAttrService, kSecAttrAccount, kSecValueData, kSecAttrAccessible };
+			void const *addValues[] = { kSecClassGenericPassword, service, account, value, kSecAttrAccessibleWhenUnlockedThisDeviceOnly };
 			CFDictionaryRef add = CFDictionaryCreate(nullptr, addKeys, addValues, 5, nullptr, nullptr);
 			status = SecItemAdd(add, nullptr);
 			CFRelease(add);
@@ -266,22 +284,23 @@ public:
 		return toStorageStatus(status);
 	}
 
-	StorageStatus load(const std::string &key, Blob &out)
+	StorageStatus load(std::string const &key, Blob *out)
 	{
-		out.clear();
+		if (!out) return StorageStatus::Error;
+		out->clear();
 		CFStringRef service = CFStringCreateWithCString(nullptr, serviceName_.c_str(), kCFStringEncodingUTF8);
 		CFStringRef account = CFStringCreateWithCString(nullptr, key.c_str(), kCFStringEncodingUTF8);
 
-		const void *keys[] = { kSecClass, kSecAttrService, kSecAttrAccount, kSecReturnData, kSecMatchLimit };
-		const void *values[] = { kSecClassGenericPassword, service, account, kCFBooleanTrue, kSecMatchLimitOne };
+		void const *keys[] = { kSecClass, kSecAttrService, kSecAttrAccount, kSecReturnData, kSecMatchLimit };
+		void const *values[] = { kSecClassGenericPassword, service, account, kCFBooleanTrue, kSecMatchLimitOne };
 		CFDictionaryRef query = CFDictionaryCreate(nullptr, keys, values, 5, nullptr, nullptr);
 
 		CFDataRef result = nullptr;
 		OSStatus status = SecItemCopyMatching(query, reinterpret_cast<CFTypeRef *>(&result));
 
 		if (status == errSecSuccess && result) {
-			out.resize(static_cast<size_t>(CFDataGetLength(result)));
-			std::memcpy(out.data(), CFDataGetBytePtr(result), out.size());
+			out->resize(static_cast<size_t>(CFDataGetLength(result)));
+			std::memcpy(out->data(), CFDataGetBytePtr(result), out->size());
 		} else if (status == errSecSuccess) {
 			status = errSecDecode;
 		}
@@ -296,13 +315,13 @@ public:
 		return toStorageStatus(status);
 	}
 
-	StorageStatus remove(const std::string &key)
+	StorageStatus remove(std::string const &key)
 	{
 		CFStringRef service = CFStringCreateWithCString(nullptr, serviceName_.c_str(), kCFStringEncodingUTF8);
 		CFStringRef account = CFStringCreateWithCString(nullptr, key.c_str(), kCFStringEncodingUTF8);
 
-		const void *keys[] = { kSecClass, kSecAttrService, kSecAttrAccount };
-		const void *values[] = { kSecClassGenericPassword, service, account };
+		void const *keys[] = { kSecClass, kSecAttrService, kSecAttrAccount };
+		void const *values[] = { kSecClassGenericPassword, service, account };
 		CFDictionaryRef query = CFDictionaryCreate(nullptr, keys, values, 3, nullptr, nullptr);
 
 		OSStatus status = SecItemDelete(query);
@@ -354,7 +373,7 @@ namespace {
 		return std::filesystem::path(std::getenv("USERPROFILE") ? std::getenv("USERPROFILE") : ".");
 	}
 
-	std::string sanitizeKey(const std::string &key)
+	std::string sanitizeKey(std::string const &key)
 	{
 		std::string safe = key;
 		for (char &c : safe) {
@@ -379,7 +398,11 @@ public:
 		return true;
 	}
 
-	StorageStatus store(const std::string &key, const Blob &data)
+	void setSchemaName(std::string const &) {}
+
+	void setServiceName(std::string const &) {}
+
+	StorageStatus store(std::string const &key, Blob const &data)
 	{
 		DATA_BLOB in;
 		in.pbData = reinterpret_cast<BYTE *>(const_cast<char *>(data.data()));
@@ -401,11 +424,12 @@ public:
 		return AtomicFile::write(directory_ / sanitizeKey(key), encrypted);
 	}
 
-	StorageStatus load(const std::string &key, Blob &result)
+	StorageStatus load(std::string const &key, Blob *result)
 	{
-		result.clear();
+		if (!result) return StorageStatus::Error;
+		result->clear();
 		Blob encrypted;
-		const StorageStatus status = AtomicFile::read(directory_ / sanitizeKey(key), encrypted);
+		const StorageStatus status = AtomicFile::read(directory_ / sanitizeKey(key), &encrypted);
 		if (status != StorageStatus::Ok) {
 			return status;
 		}
@@ -419,13 +443,13 @@ public:
 			return StorageStatus::Error;
 		}
 
-		result.assign(reinterpret_cast<char *>(out.pbData), reinterpret_cast<char *>(out.pbData) + out.cbData);
+		result->assign(reinterpret_cast<char *>(out.pbData), reinterpret_cast<char *>(out.pbData) + out.cbData);
 		SecureZeroMemory(out.pbData, out.cbData);
 		LocalFree(out.pbData);
 		return StorageStatus::Ok;
 	}
 
-	StorageStatus remove(const std::string &key)
+	StorageStatus remove(std::string const &key)
 	{
 		return AtomicFile::remove(directory_ / sanitizeKey(key));
 	}
@@ -442,18 +466,23 @@ public:
 		return false;
 	}
 
-	StorageStatus store(const std::string &, const Blob &)
+	void setSchemaName(std::string const &) {}
+
+	void setServiceName(std::string const &) {}
+
+	StorageStatus store(std::string const &, Blob const &)
 	{
 		return StorageStatus::Unavailable;
 	}
 
-	StorageStatus load(const std::string &, Blob &out)
+	StorageStatus load(std::string const &, Blob *out)
 	{
-		out.clear();
+		if (!out) return StorageStatus::Error;
+		out->clear();
 		return StorageStatus::Unavailable;
 	}
 
-	StorageStatus remove(const std::string &)
+	StorageStatus remove(std::string const &)
 	{
 		return StorageStatus::Unavailable;
 	}
@@ -488,19 +517,29 @@ std::string SystemKeychainBackend::name() const
 #endif
 }
 
-StorageStatus SystemKeychainBackend::store(const std::string &key, const Blob &data)
+StorageStatus SystemKeychainBackend::store(std::string const &key, Blob const &data)
 {
 	return impl_->store(key, data);
 }
 
-StorageStatus SystemKeychainBackend::load(const std::string &key, Blob &out)
+StorageStatus SystemKeychainBackend::load(std::string const &key, Blob *out)
 {
 	return impl_->load(key, out);
 }
 
-StorageStatus SystemKeychainBackend::remove(const std::string &key)
+StorageStatus SystemKeychainBackend::remove(std::string const &key)
 {
 	return impl_->remove(key);
+}
+
+void SystemKeychainBackend::setSchemaName(std::string const &schemaName)
+{
+	impl_->setSchemaName(schemaName);
+}
+
+void SystemKeychainBackend::setServiceName(std::string const &serviceName)
+{
+	impl_->setServiceName(serviceName);
 }
 
 } // namespace localvault

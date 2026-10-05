@@ -40,7 +40,7 @@ static std::string QStringToStd(const QString &s)
 	return s.toUtf8().toStdString();
 }
 
-static QString stdToQString(const std::string &s)
+static QString stdToQString(std::string const &s)
 {
 	return QString::fromUtf8(s.c_str(), static_cast<int>(s.size()));
 }
@@ -89,29 +89,31 @@ public:
 		return pin;
 	}
 
-	static bool secureBufferEquals(const SecureBuffer &buf, const Blob &blob)
+	static bool secureBufferEquals(SecureBuffer const &buf, Blob const &blob)
 	{
 		return buf.size() == blob.size()
 			&& std::equal(buf.begin(), buf.end(), blob.begin(), blob.end());
 	}
 
-	static bool blobEquals(const Blob &a, const QByteArray &b)
+	static bool blobEquals(Blob const &a, const QByteArray &b)
 	{
 		return a.size() == static_cast<size_t>(b.size())
 			&& std::equal(a.begin(), a.end(), b.begin(), b.end());
 	}
 
-	static Blob encryptOrEmpty(Vault &vault, const Blob &plain)
+	static Blob encryptOrEmpty(Vault *vault, Blob const &plain)
 	{
 		Blob cipher;
-		(void)vault.encrypt(plain, &cipher);
+		if (!vault) return cipher;
+		(void)vault->encrypt(plain, &cipher);
 		return cipher;
 	}
 
-	static bool decryptsTo(Vault &vault, const Blob &cipher, const Blob &expected)
+	static bool decryptsTo(Vault *vault, Blob const &cipher, Blob const &expected)
 	{
+		if (!vault) return false;
 		SecureBuffer plain;
-		return vault.decryptToSecureBuffer(cipher, &plain) == VaultError::None && secureBufferEquals(plain, expected);
+		return vault->decryptToSecureBuffer(cipher, &plain) == VaultError::None && secureBufferEquals(plain, expected);
 	}
 
 	/**
@@ -139,7 +141,7 @@ public:
 		bool isAvailable() const override { return state_->available; }
 		std::string name() const override { return "memory"; }
 
-		StorageStatus store(const std::string &key, const Blob &data) override
+		StorageStatus store(std::string const &key, Blob const &data) override
 		{
 			if (!state_->available) return StorageStatus::Unavailable;
 			if (key == state_->failStoreKey) return StorageStatus::Error;
@@ -147,9 +149,10 @@ public:
 			return StorageStatus::Ok;
 		}
 
-		StorageStatus load(const std::string &key, Blob &out) override
+		StorageStatus load(std::string const &key, Blob *out) override
 		{
-			out.clear();
+			if (!out) return StorageStatus::Error;
+			out->clear();
 			if (!state_->available) return StorageStatus::Unavailable;
 			if (key == state_->hiddenKey && state_->hiddenLoads > 0) {
 				--state_->hiddenLoads;
@@ -157,11 +160,11 @@ public:
 			}
 			auto it = state_->items.find(key);
 			if (it == state_->items.end()) return StorageStatus::NotFound;
-			out = it->second;
+			*out = it->second;
 			return StorageStatus::Ok;
 		}
 
-		StorageStatus remove(const std::string &key) override
+		StorageStatus remove(std::string const &key) override
 		{
 			if (!state_->available) return StorageStatus::Unavailable;
 			return state_->items.erase(key) ? StorageStatus::Ok : StorageStatus::NotFound;
@@ -210,12 +213,12 @@ public:
 
 		FileBackend backend(QStringToPath(tempDir.path()));
 		Blob out;
-		check(backend.load("missing", out) == StorageStatus::NotFound && out.empty(), "FileBackend load missing returns NotFound");
+		check(backend.load("missing", &out) == StorageStatus::NotFound && out.empty(), "FileBackend load missing returns NotFound");
 		check(backend.remove("missing") == StorageStatus::NotFound, "FileBackend remove missing returns NotFound");
 
 		check(backend.store("item", QByteArrayToBlob("first")) == StorageStatus::Ok, "FileBackend store");
 		check(backend.store("item", QByteArrayToBlob("second")) == StorageStatus::Ok, "FileBackend overwrite");
-		check(backend.load("item", out) == StorageStatus::Ok && blobEquals(out, "second"), "FileBackend load returns latest");
+		check(backend.load("item", &out) == StorageStatus::Ok && blobEquals(out, "second"), "FileBackend load returns latest");
 
 #if defined(__unix__) || defined(__APPLE__)
 		struct stat st { };
@@ -226,12 +229,12 @@ public:
 #endif
 
 		check(backend.remove("item") == StorageStatus::Ok, "FileBackend remove");
-		check(backend.load("item", out) == StorageStatus::NotFound, "FileBackend removed");
+		check(backend.load("item", &out) == StorageStatus::NotFound, "FileBackend removed");
 
 		// 無害化が必要なキーで保存・読み出し
 		const std::string dangerousKey = "../<bad>:key|name?*";
 		check(backend.store(dangerousKey, QByteArrayToBlob("test data")) == StorageStatus::Ok, "FileBackend stores sanitized key");
-		check(backend.load(dangerousKey, out) == StorageStatus::Ok && blobEquals(out, "test data"), "FileBackend loads sanitized key");
+		check(backend.load(dangerousKey, &out) == StorageStatus::Ok && blobEquals(out, "test data"), "FileBackend loads sanitized key");
 		check(backend.remove(dangerousKey) == StorageStatus::Ok, "FileBackend removes sanitized key");
 	}
 
@@ -252,17 +255,17 @@ public:
 		check(vault.state() == VaultState::Unlocked, "Vault is unlocked after setup");
 
 		Blob secret = QByteArrayToBlob("API_KEY=sk-1234567890abcdef");
-		Blob encrypted = encryptOrEmpty(vault, secret);
+		Blob encrypted = encryptOrEmpty(&vault, secret);
 		check(!encrypted.empty(), "Vault encrypt");
 		check(encrypted != secret, "Vault encryption changes data");
-		check(decryptsTo(vault, encrypted, secret), "Vault decrypt");
+		check(decryptsTo(&vault, encrypted, secret), "Vault decrypt");
 
-		Blob emptyCipher = encryptOrEmpty(vault, Blob());
-		check(!emptyCipher.empty() && decryptsTo(vault, emptyCipher, Blob()), "Vault empty plaintext roundtrip");
+		Blob emptyCipher = encryptOrEmpty(&vault, Blob());
+		check(!emptyCipher.empty() && decryptsTo(&vault, emptyCipher, Blob()), "Vault empty plaintext roundtrip");
 
 		SecureBuffer securePlain(secret.data(), secret.size());
 		Blob secureCipher;
-		check(vault.encrypt(securePlain, &secureCipher) == VaultError::None && decryptsTo(vault, secureCipher, secret), "Vault encrypt from SecureBuffer");
+		check(vault.encrypt(securePlain, &secureCipher) == VaultError::None && decryptsTo(&vault, secureCipher, secret), "Vault encrypt from SecureBuffer");
 
 		vault.lock();
 		check(vault.state() == VaultState::Locked, "Vault locked state");
@@ -272,7 +275,7 @@ public:
 		check(vault.encrypt(secret, &cipher) == VaultError::Locked && cipher.empty(), "Vault encrypt fails with Locked");
 
 		check(vault.unlock(pin) == VaultError::None, "Vault unlock");
-		check(decryptsTo(vault, encrypted, secret), "Vault decrypt after unlock");
+		check(decryptsTo(&vault, encrypted, secret), "Vault decrypt after unlock");
 	}
 
 	void testVaultWrongPin()
@@ -303,7 +306,7 @@ public:
 		check(vault.setup(oldPin) == VaultError::None, "Vault setup for PIN change");
 
 		Blob secret = QByteArrayToBlob("SuperSecretToken");
-		Blob encrypted = encryptOrEmpty(vault, secret);
+		Blob encrypted = encryptOrEmpty(&vault, secret);
 
 		check(vault.changePin(newPin, newPin) == VaultError::WrongPin, "Vault change PIN with wrong old PIN fails");
 		check(vault.changePin(oldPin, newPin) == VaultError::None, "Vault change PIN");
@@ -312,7 +315,7 @@ public:
 		vault.lock();
 		check(vault.unlock(oldPin) == VaultError::WrongPin, "Vault unlock with old PIN fails");
 		check(vault.unlock(newPin) == VaultError::None, "Vault unlock with new PIN succeeds");
-		check(decryptsTo(vault, encrypted, secret), "Vault decrypt after PIN change");
+		check(decryptsTo(&vault, encrypted, secret), "Vault decrypt after PIN change");
 	}
 
 	void testVaultChangePinStorageFailure()
@@ -327,7 +330,7 @@ public:
 			Vault vault(&backend, EMK_KEY);
 			check(vault.setup(oldPin) == VaultError::None, "Vault setup for main-store failure");
 			Blob secret = QByteArrayToBlob("secret");
-			Blob encrypted = encryptOrEmpty(vault, secret);
+			Blob encrypted = encryptOrEmpty(&vault, secret);
 
 			backend.state().failStoreKey = EMK_KEY;
 			check(vault.changePin(oldPin, newPin) == VaultError::StorageError, "Vault change PIN reports StorageError");
@@ -338,7 +341,7 @@ public:
 			vault.lock();
 			check(vault.unlock(newPin) == VaultError::None, "Vault unlock with new PIN via pending EMK");
 			check(backend.state().items.count(pendingKey) == 0, "Vault promotes pending EMK");
-			check(decryptsTo(vault, encrypted, secret), "Vault decrypt after pending promotion");
+			check(decryptsTo(&vault, encrypted, secret), "Vault decrypt after pending promotion");
 			vault.lock();
 			check(vault.unlock(oldPin) == VaultError::WrongPin, "Vault old PIN fails after promotion");
 		}
@@ -379,7 +382,7 @@ public:
 		SecureBuffer oldPin = pinFromUtf8("oldpin");
 		SecureBuffer newPin = pinFromUtf8("newpin");
 		check(vault.setup(oldPin) == VaultError::None, "Vault setup for reset");
-		Blob oldCipher = encryptOrEmpty(vault, QByteArrayToBlob("OldSecret"));
+		Blob oldCipher = encryptOrEmpty(&vault, QByteArrayToBlob("OldSecret"));
 
 		check(vault.reset(newPin) == VaultError::None, "Vault reset");
 		check(vault.isUnlocked(), "Vault unlocked after reset");
@@ -398,11 +401,11 @@ public:
 		SecureBuffer oldPin = pinFromUtf8("oldpin");
 		check(vault.setup(oldPin) == VaultError::None, "Vault setup for failed reset");
 		Blob secret = QByteArrayToBlob("keep me");
-		Blob encrypted = encryptOrEmpty(vault, secret);
+		Blob encrypted = encryptOrEmpty(&vault, secret);
 
 		backend.state().failStoreKey = std::string(EMK_KEY) + ".pending";
 		check(vault.reset(pinFromUtf8("newpin")) == VaultError::StorageError, "Vault reset reports StorageError");
-		check(decryptsTo(vault, encrypted, secret), "Vault keeps old MK in memory after failed reset");
+		check(decryptsTo(&vault, encrypted, secret), "Vault keeps old MK in memory after failed reset");
 		backend.state().failStoreKey.clear();
 		vault.lock();
 		check(vault.unlock(oldPin) == VaultError::None, "Vault old PIN still works after failed reset");
@@ -422,7 +425,7 @@ public:
 
 		check(vault.unlock(pin) == VaultError::NotSetup, "Vault unlock reports NotSetup");
 		check(vault.setup(pin) == VaultError::None, "Vault setup for error tests");
-		Blob encrypted = encryptOrEmpty(vault, QByteArrayToBlob("TamperTestSecret"));
+		Blob encrypted = encryptOrEmpty(&vault, QByteArrayToBlob("TamperTestSecret"));
 
 		SecureBuffer plain;
 		Blob tampered = encrypted;
@@ -533,13 +536,13 @@ public:
 		const std::string testKey = "localvault-phase3-test";
 		backend.remove(testKey);
 		Blob loaded;
-		check(backend.load(testKey, loaded) == StorageStatus::NotFound, "SystemKeychainBackend load missing returns NotFound");
+		check(backend.load(testKey, &loaded) == StorageStatus::NotFound, "SystemKeychainBackend load missing returns NotFound");
 
 		check(backend.store(testKey, QByteArrayToBlob("first")) == StorageStatus::Ok, "SystemKeychainBackend store");
 		check(backend.store(testKey, QByteArrayToBlob("EMK blob for system keychain test")) == StorageStatus::Ok, "SystemKeychainBackend overwrite");
-		check(backend.load(testKey, loaded) == StorageStatus::Ok && blobEquals(loaded, "EMK blob for system keychain test"), "SystemKeychainBackend load");
+		check(backend.load(testKey, &loaded) == StorageStatus::Ok && blobEquals(loaded, "EMK blob for system keychain test"), "SystemKeychainBackend load");
 		check(backend.remove(testKey) == StorageStatus::Ok, "SystemKeychainBackend remove");
-		check(backend.load(testKey, loaded) == StorageStatus::NotFound, "SystemKeychainBackend removed");
+		check(backend.load(testKey, &loaded) == StorageStatus::NotFound, "SystemKeychainBackend removed");
 		check(backend.remove(testKey) == StorageStatus::NotFound, "SystemKeychainBackend remove missing returns NotFound");
 	}
 
@@ -559,12 +562,12 @@ public:
 		check(vault.setup(pin) == VaultError::None, "Vault setup with SystemKeychainBackend");
 
 		Blob secret = QByteArrayToBlob("Secret stored via system keychain");
-		Blob encrypted = encryptOrEmpty(vault, secret);
+		Blob encrypted = encryptOrEmpty(&vault, secret);
 		check(!encrypted.empty(), "Vault encrypt with SystemKeychainBackend");
 
 		vault.lock();
 		check(vault.unlock(pin) == VaultError::None, "Vault unlock with SystemKeychainBackend");
-		check(decryptsTo(vault, encrypted, secret), "Vault decrypt with SystemKeychainBackend");
+		check(decryptsTo(&vault, encrypted, secret), "Vault decrypt with SystemKeychainBackend");
 
 		check(vault.destroy() == VaultError::None, "Vault destroy with SystemKeychainBackend");
 	}
@@ -646,11 +649,12 @@ static bool askRetry(const QString &title, const QString &message)
 /**
  * @brief 保存先を決定する。ファイルフォールバックはユーザーの同意を得た場合のみ使用する
  */
-static bool selectBackendFromGui(const BackendSelector &selector, BackendSelection &selection)
+static bool selectBackendFromGui(const BackendSelector &selector, BackendSelection *selection)
 {
+	if (!selection) return false;
 	for (;;) {
-		selection = selector.select();
-		switch (selection.status) {
+		*selection = selector.select();
+		switch (selection->status) {
 		case BackendSelection::Status::Ok:
 			return true;
 		case BackendSelection::Status::NeedsFileConsent: {
@@ -664,14 +668,14 @@ static bool selectBackendFromGui(const BackendSelector &selector, BackendSelecti
 							"Store the Vault in a file?"),
 				QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Cancel);
 			if (answer != QMessageBox::Yes) return false;
-			selection.status = BackendSelection::Status::Ok;
+			selection->status = BackendSelection::Status::Ok;
 			return true;
 		}
 		case BackendSelection::Status::RecordedBackendUnavailable:
 			if (!askRetry(QObject::tr("Vault Storage Unavailable"),
 					QObject::tr("The Vault is stored in the %1 storage, which is not available now.\n\n"
 								"If you use a system keyring, make sure it is running and unlocked, then retry.")
-						.arg(QString::fromLatin1(BackendSelector::name(selection.kind))))) {
+						.arg(QString::fromLatin1(BackendSelector::name(selection->kind))))) {
 				return false;
 			}
 			continue;
@@ -685,26 +689,27 @@ static bool selectBackendFromGui(const BackendSelector &selector, BackendSelecti
 }
 
 /** セットアップ・リセット成功後、未記録の保存先を記録する */
-static void recordBackend(const BackendSelector &selector, BackendSelection &selection)
+static void recordBackend(const BackendSelector &selector, BackendSelection *selection)
 {
-	if (selection.recorded) return;
-	selection.recorded = selector.record(selection.kind) == StorageStatus::Ok;
-	if (!selection.recorded) {
+	if (!selection || selection->recorded) return;
+	selection->recorded = selector.record(selection->kind) == StorageStatus::Ok;
+	if (!selection->recorded) {
 		QMessageBox::warning(nullptr, QObject::tr("Configuration Error"),
 			QObject::tr("Failed to record the Vault storage location. The Vault was created, but the application "
 						"may not find it if the storage becomes temporarily unavailable."));
 	}
 }
 
-static bool setupVaultFromGui(Vault &vault)
+static bool setupVaultFromGui(Vault *vault)
 {
+	if (!vault) return false;
 	bool ok = false;
 	SecureBuffer pin = PinDialog::setupPin(nullptr, &ok);
 	if (!ok || pin.empty()) {
 		QMessageBox::information(nullptr, QObject::tr("Cancelled"), QObject::tr("Vault setup was cancelled."));
 		return false;
 	}
-	const VaultError err = vault.setup(pin);
+	const VaultError err = vault->setup(pin);
 	pin.clear();
 	if (err != VaultError::None) {
 		QMessageBox::critical(nullptr, QObject::tr("Setup Failed"), vaultErrorMessage(err));
@@ -714,8 +719,9 @@ static bool setupVaultFromGui(Vault &vault)
 	return true;
 }
 
-static bool resetVaultFromGui(Vault &vault)
+static bool resetVaultFromGui(Vault *vault)
 {
+	if (!vault) return false;
 	const auto confirmation = QMessageBox::warning(
 		nullptr, QObject::tr("Reset Vault"),
 		QObject::tr("This permanently deletes the current Vault. Data encrypted with its current key cannot be recovered.\n\nContinue?"),
@@ -726,7 +732,7 @@ static bool resetVaultFromGui(Vault &vault)
 	bool ok = false;
 	SecureBuffer newPin = PinDialog::setupPin(nullptr, &ok);
 	if (!ok || newPin.empty()) return false;
-	const VaultError err = vault.reset(newPin);
+	const VaultError err = vault->reset(newPin);
 	newPin.clear();
 	if (err != VaultError::None) {
 		QMessageBox::critical(nullptr, QObject::tr("Reset Failed"), vaultErrorMessage(err));
@@ -736,13 +742,14 @@ static bool resetVaultFromGui(Vault &vault)
 }
 
 /** @return 解除できた場合 true。PIN 誤りは再入力を促し、それ以外のエラーで中断する */
-static bool unlockVaultFromGui(Vault &vault)
+static bool unlockVaultFromGui(Vault *vault)
 {
+	if (!vault) return false;
 	for (;;) {
 		bool ok = false;
 		SecureBuffer pin = PinDialog::requestPin(nullptr, &ok);
 		if (!ok || pin.empty()) return false;
-		const VaultError err = vault.unlock(pin);
+		const VaultError err = vault->unlock(pin);
 		pin.clear();
 		if (err == VaultError::None) return true;
 		if (err == VaultError::WrongPin) {
@@ -764,7 +771,7 @@ static int runGuiDemo(int argc, char *argv[])
 
 	BackendSelector selector(appConfigDirectory(), EMK_KEY);
 	BackendSelection selection;
-	if (!selectBackendFromGui(selector, selection)) return 1;
+	if (!selectBackendFromGui(selector, &selection)) return 1;
 	Vault vault(selection.backend.get(), EMK_KEY);
 
 	for (bool ready = false; !ready;) {
@@ -777,8 +784,8 @@ static int runGuiDemo(int argc, char *argv[])
 			}
 			break;
 		case VaultState::NotSetup:
-			if (!setupVaultFromGui(vault)) return 0;
-			recordBackend(selector, selection);
+			if (!setupVaultFromGui(&vault)) return 0;
+			recordBackend(selector, &selection);
 			ready = true;
 			break;
 		case VaultState::Locked: {
@@ -791,11 +798,11 @@ static int runGuiDemo(int argc, char *argv[])
 			choice.exec();
 
 			if (choice.clickedButton() == unlockButton) {
-				if (!unlockVaultFromGui(vault)) return 0;
+				if (!unlockVaultFromGui(&vault)) return 0;
 				ready = true;
 			} else if (choice.clickedButton() == resetButton) {
-				if (resetVaultFromGui(vault)) {
-					recordBackend(selector, selection);
+				if (resetVaultFromGui(&vault)) {
+					recordBackend(selector, &selection);
 					ready = true;
 				}
 			} else {

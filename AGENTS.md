@@ -62,7 +62,7 @@
   - libsecret の読み出しを `secret_password_search_sync`（`SECRET_SEARCH_ALL`）に変更し、ロック中の項目を「存在しない」と誤認しないようにした。`isAvailable()` は `secret_service_get_sync` による接続確認のみとし、解除ダイアログを出さない
   - `setup()` は本キーへの書き込み直前に EMK が存在しないことを再確認する（多重防御）
   - Windows で `QString` → `std::filesystem::path` を UTF-16 経由で変換（非 ASCII ユーザー名対策）
-  - `Vault::encrypt(const SecureBuffer &, Blob &)` を追加
+  - `Vault::encrypt(SecureBuffer const &, Blob &)` を追加
   - 全モジュールを `namespace localvault` に移動
   - GUI 層から libsodium の直接呼び出しを除去（`SecureBuffer::equals()` / `secure_memory::zero()` を使用）
 
@@ -162,14 +162,14 @@
    - 2段階鍵体系（MK / KEK / EMK）を実装
    - 以下の API を提供
      - `VaultState state() const` — NotSetup / Locked / Unlocked / BackendUnavailable / StorageError
-     - `VaultError setup(const SecureBuffer &pin)` — 初回セットアップ（既存EMKは上書きしない）
-     - `VaultError unlock(const SecureBuffer &pin)` — PIN で Vault を解除
+     - `VaultError setup(SecureBuffer const &pin)` — 初回セットアップ（既存EMKは上書きしない）
+     - `VaultError unlock(SecureBuffer const &pin)` — PIN で Vault を解除
      - `void lock()` — メモリ上の MK を消去
-     - `VaultError encrypt(const SecureBuffer &plain, Blob &cipher)` — データ暗号化（機密データはこちら）
-     - `VaultError encrypt(const Blob &plain, Blob &cipher)` — データ暗号化（通常メモリ上のデータ用）
-     - `VaultError decryptToSecureBuffer(const Blob &cipher, SecureBuffer &plain)` — データ復号API（平文はSecureBufferに返す）
-     - `VaultError changePin(const SecureBuffer &oldPin, const SecureBuffer &newPin)` — PIN変更
-     - `VaultError reset(const SecureBuffer &newPin)` — 新しいMKでEMKを置き換える不可逆操作
+     - `VaultError encrypt(SecureBuffer const &plain, Blob &cipher)` — データ暗号化（機密データはこちら）
+     - `VaultError encrypt(Blob const &plain, Blob &cipher)` — データ暗号化（通常メモリ上のデータ用）
+     - `VaultError decryptToSecureBuffer(Blob const &cipher, SecureBuffer &plain)` — データ復号API（平文はSecureBufferに返す）
+     - `VaultError changePin(SecureBuffer const &oldPin, SecureBuffer const &newPin)` — PIN変更
+     - `VaultError reset(SecureBuffer const &newPin)` — 新しいMKでEMKを置き換える不可逆操作
      - `VaultError destroy()` — EMKを削除する不可逆操作
     - 成功時は `VaultError::None`。`BackendUnavailable` / `StorageError` を `WrongPin` や `NotSetup` と混同しないこと
     - Qt 非依存（std::vector<char> / std::string / std::filesystem）

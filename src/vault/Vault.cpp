@@ -37,17 +37,17 @@ namespace {
 		return ready;
 	}
 
-	void appendU32(Blob &out, uint32_t value)
+	void appendU32(Blob *out, uint32_t value)
 	{
-		out.push_back(static_cast<char>((value >> 24) & 0xff));
-		out.push_back(static_cast<char>((value >> 16) & 0xff));
-		out.push_back(static_cast<char>((value >> 8) & 0xff));
-		out.push_back(static_cast<char>(value & 0xff));
+		out->push_back(static_cast<char>((value >> 24) & 0xff));
+		out->push_back(static_cast<char>((value >> 16) & 0xff));
+		out->push_back(static_cast<char>((value >> 8) & 0xff));
+		out->push_back(static_cast<char>(value & 0xff));
 	}
 
-	uint32_t readU32(const Blob &in, size_t offset)
+	uint32_t readU32(Blob const &in, size_t offset)
 	{
-		const auto *p = reinterpret_cast<const unsigned char *>(in.data() + offset);
+		const auto *p = reinterpret_cast<unsigned char const *>(in.data() + offset);
 		return (static_cast<uint32_t>(p[0]) << 24) | (static_cast<uint32_t>(p[1]) << 16) | (static_cast<uint32_t>(p[2]) << 8) | p[3];
 	}
 
@@ -108,7 +108,7 @@ const char *toString(VaultError error)
 	return "unknown error";
 }
 
-Vault::Vault(ISecretStorageBackend *backend, const std::string &emkKey)
+Vault::Vault(ISecretStorageBackend *backend, std::string const &emkKey)
 	: backend_(backend)
 	, emkKey_(emkKey)
 	, pendingKey_(emkKey + PENDING_SUFFIX)
@@ -135,9 +135,9 @@ VaultState Vault::state() const
 	if (!backend_) return VaultState::BackendUnavailable;
 	if (isUnlocked()) return VaultState::Unlocked;
 	Blob emk;
-	StorageStatus status = backend_->load(emkKey_, emk);
+	StorageStatus status = backend_->load(emkKey_, &emk);
 	if (status == StorageStatus::NotFound) {
-		status = backend_->load(pendingKey_, emk);
+		status = backend_->load(pendingKey_, &emk);
 	}
 	switch (status) {
 	case StorageStatus::Ok:
@@ -158,9 +158,10 @@ void Vault::lock()
 	unlocked_ = false;
 }
 
-VaultError Vault::deriveKek(const SecureBuffer &pin, const Blob &salt, uint32_t opsLimit, uint32_t memLimit, SecureBuffer &kek) const
+VaultError Vault::deriveKek(SecureBuffer const &pin, Blob const &salt, uint32_t opsLimit, uint32_t memLimit, SecureBuffer *kek) const
 {
-	kek.clear();
+	if (!kek) return VaultError::InvalidArgument;
+	kek->clear();
 	if (pin.empty()) return VaultError::InvalidArgument;
 	if (salt.size() != SALT_SIZE
 		|| opsLimit < MIN_ARGON2_OPSLIMIT || opsLimit > MAX_ARGON2_OPSLIMIT
@@ -170,21 +171,22 @@ VaultError Vault::deriveKek(const SecureBuffer &pin, const Blob &salt, uint32_t 
 
 	SecureBuffer result(MK_SIZE);
 	if (!result.lock()) return VaultError::MemoryLockFailed;
-	if (crypto_pwhash(result.data(), result.size(), reinterpret_cast<const char *>(pin.data()), pin.size(), reinterpret_cast<const unsigned char *>(salt.data()), opsLimit, memLimit, crypto_pwhash_ALG_ARGON2ID13) != 0) {
+	if (crypto_pwhash(result.data(), result.size(), reinterpret_cast<const char *>(pin.data()), pin.size(), reinterpret_cast<unsigned char const *>(salt.data()), opsLimit, memLimit, crypto_pwhash_ALG_ARGON2ID13) != 0) {
 		return VaultError::KeyDerivationFailed;
 	}
-	kek = std::move(result);
+	*kek = std::move(result);
 	return VaultError::None;
 }
 
-VaultError Vault::createEmk(const SecureBuffer &mk, const SecureBuffer &pin, Blob &emk) const
+VaultError Vault::createEmk(SecureBuffer const &mk, SecureBuffer const &pin, Blob *emk) const
 {
-	emk.clear();
+	if (!emk) return VaultError::InvalidArgument;
+	emk->clear();
 	if (mk.size() != MK_SIZE) return VaultError::InvalidArgument;
 
 	const Blob salt = generateRandom(SALT_SIZE);
 	SecureBuffer kek;
-	const VaultError err = deriveKek(pin, salt, ARGON2_OPSLIMIT, ARGON2_MEMLIMIT, kek);
+	const VaultError err = deriveKek(pin, salt, ARGON2_OPSLIMIT, ARGON2_MEMLIMIT, &kek);
 	if (err != VaultError::None) return err;
 
 	Blob header;
@@ -194,8 +196,8 @@ VaultError Vault::createEmk(const SecureBuffer &mk, const SecureBuffer &pin, Blo
 	header.push_back(static_cast<char>(EMK_RECORD));
 	header.push_back(static_cast<char>(XCHACHA20_POLY1305));
 	header.push_back(static_cast<char>(ARGON2ID));
-	appendU32(header, ARGON2_OPSLIMIT);
-	appendU32(header, ARGON2_MEMLIMIT);
+	appendU32(&header, ARGON2_OPSLIMIT);
+	appendU32(&header, ARGON2_MEMLIMIT);
 	header.push_back(static_cast<char>(SALT_SIZE));
 	header.insert(header.end(), salt.begin(), salt.end());
 	const Blob nonce = generateRandom(NONCE_SIZE);
@@ -204,25 +206,26 @@ VaultError Vault::createEmk(const SecureBuffer &mk, const SecureBuffer &pin, Blo
 	if (crypto_aead_xchacha20poly1305_ietf_encrypt(reinterpret_cast<unsigned char *>(encrypted.data()),
 			&encryptedLen, mk.data(),
 			MK_SIZE,
-			reinterpret_cast<const unsigned char *>(header.data()),
+			reinterpret_cast<unsigned char const *>(header.data()),
 			header.size(),
 			nullptr,
-			reinterpret_cast<const unsigned char *>(nonce.data()),
+			reinterpret_cast<unsigned char const *>(nonce.data()),
 			kek.data())
 		!= 0) {
 		return VaultError::CryptoInitFailed;
 	}
 	encrypted.resize(static_cast<size_t>(encryptedLen));
-	emk.reserve(header.size() + nonce.size() + encrypted.size());
-	emk.insert(emk.end(), header.begin(), header.end());
-	emk.insert(emk.end(), nonce.begin(), nonce.end());
-	emk.insert(emk.end(), encrypted.begin(), encrypted.end());
+	emk->reserve(header.size() + nonce.size() + encrypted.size());
+	emk->insert(emk->end(), header.begin(), header.end());
+	emk->insert(emk->end(), nonce.begin(), nonce.end());
+	emk->insert(emk->end(), encrypted.begin(), encrypted.end());
 	return VaultError::None;
 }
 
-VaultError Vault::parseEmk(const Blob &emk, const SecureBuffer &pin, SecureBuffer &mk) const
+VaultError Vault::parseEmk(Blob const &emk, SecureBuffer const &pin, SecureBuffer *mk) const
 {
-	mk.clear();
+	if (!mk) return VaultError::InvalidArgument;
+	mk->clear();
 	if (emk.size() != static_cast<size_t>(EMK_SIZE)
 		|| !std::equal(emk.begin(), emk.begin() + MAGIC_SIZE, MAGIC)
 		|| static_cast<uint8_t>(emk[MAGIC_SIZE]) != VERSION
@@ -234,7 +237,7 @@ VaultError Vault::parseEmk(const Blob &emk, const SecureBuffer &pin, SecureBuffe
 	}
 	const Blob salt(emk.begin() + MAGIC_SIZE + 13, emk.begin() + MAGIC_SIZE + 13 + SALT_SIZE);
 	SecureBuffer kek;
-	const VaultError err = deriveKek(pin, salt, readU32(emk, MAGIC_SIZE + 4), readU32(emk, MAGIC_SIZE + 8), kek);
+	const VaultError err = deriveKek(pin, salt, readU32(emk, MAGIC_SIZE + 4), readU32(emk, MAGIC_SIZE + 8), &kek);
 	if (err != VaultError::None) return err;
 
 	const Blob header(emk.begin(), emk.begin() + EMK_HEADER_SIZE);
@@ -244,28 +247,28 @@ VaultError Vault::parseEmk(const Blob &emk, const SecureBuffer &pin, SecureBuffe
 	if (!result.lock()) return VaultError::MemoryLockFailed;
 	unsigned long long resultLen = 0;
 	const int rc = crypto_aead_xchacha20poly1305_ietf_decrypt(result.data(), &resultLen, nullptr,
-		reinterpret_cast<const unsigned char *>(encrypted.data()), encrypted.size(),
-		reinterpret_cast<const unsigned char *>(header.data()), header.size(),
-		reinterpret_cast<const unsigned char *>(nonce.data()), kek.data());
+		reinterpret_cast<unsigned char const *>(encrypted.data()), encrypted.size(),
+		reinterpret_cast<unsigned char const *>(header.data()), header.size(),
+		reinterpret_cast<unsigned char const *>(nonce.data()), kek.data());
 	if (rc != 0 || resultLen != MK_SIZE) return VaultError::WrongPin;
-	mk = std::move(result);
+	*mk = std::move(result);
 	return VaultError::None;
 }
 
-VaultError Vault::storeVerified(const std::string &key, const Blob &data)
+VaultError Vault::storeVerified(std::string const &key, Blob const &data)
 {
 	const StorageStatus stored = backend_->store(key, data);
 	if (stored != StorageStatus::Ok) {
 		return stored == StorageStatus::Unavailable ? VaultError::BackendUnavailable : VaultError::StorageError;
 	}
 	Blob readBack;
-	const StorageStatus loaded = backend_->load(key, readBack);
+	const StorageStatus loaded = backend_->load(key, &readBack);
 	if (loaded == StorageStatus::Unavailable) return VaultError::BackendUnavailable;
 	if (loaded != StorageStatus::Ok || readBack != data) return VaultError::StorageError;
 	return VaultError::None;
 }
 
-VaultError Vault::writeEmk(const Blob &emk, bool createOnly)
+VaultError Vault::writeEmk(Blob const &emk, bool createOnly)
 {
 	// 1. ステージングに書き込み・検証。失敗時は本キーに一切触れない
 	VaultError err = storeVerified(pendingKey_, emk);
@@ -277,7 +280,7 @@ VaultError Vault::writeEmk(const Blob &emk, bool createOnly)
 		// 新規作成時は本キーが存在しないことを書き込み直前に再確認する。
 		// state() の時点ではキーリングのロック等で見えなかった既存 EMK を上書きしないため
 		Blob existing;
-		const StorageStatus status = backend_->load(emkKey_, existing);
+		const StorageStatus status = backend_->load(emkKey_, &existing);
 		if (status != StorageStatus::NotFound) {
 			backend_->remove(pendingKey_);
 			return status == StorageStatus::Ok ? VaultError::AlreadySetup : toVaultError(status);
@@ -291,12 +294,13 @@ VaultError Vault::writeEmk(const Blob &emk, bool createOnly)
 	return VaultError::None;
 }
 
-VaultError Vault::openEmk(const SecureBuffer &pin, SecureBuffer &mk)
+VaultError Vault::openEmk(SecureBuffer const &pin, SecureBuffer *mk)
 {
-	mk.clear();
+	if (!mk) return VaultError::InvalidArgument;
+	mk->clear();
 	Blob emk;
 	VaultError mainError;
-	const StorageStatus mainStatus = backend_->load(emkKey_, emk);
+	const StorageStatus mainStatus = backend_->load(emkKey_, &emk);
 	if (mainStatus == StorageStatus::Ok) {
 		mainError = parseEmk(emk, pin, mk);
 		if (mainError == VaultError::None) {
@@ -313,7 +317,7 @@ VaultError Vault::openEmk(const SecureBuffer &pin, SecureBuffer &mk)
 
 	// 本キーで開けない場合、中断された書き換えのステージングを試す
 	Blob pending;
-	const StorageStatus pendingStatus = backend_->load(pendingKey_, pending);
+	const StorageStatus pendingStatus = backend_->load(pendingKey_, &pending);
 	if (pendingStatus == StorageStatus::NotFound) return mainError;
 	if (pendingStatus != StorageStatus::Ok) {
 		return mainError == VaultError::NotSetup ? toVaultError(pendingStatus) : mainError;
@@ -339,7 +343,7 @@ VaultError Vault::newMasterKey(SecureBuffer *mk)
 	return VaultError::None;
 }
 
-VaultError Vault::setup(const SecureBuffer &pin)
+VaultError Vault::setup(SecureBuffer const &pin)
 {
 	if (pin.empty()) return VaultError::InvalidArgument;
 	if (!backend_) return VaultError::BackendUnavailable;
@@ -360,7 +364,7 @@ VaultError Vault::setup(const SecureBuffer &pin)
 	VaultError err = newMasterKey(&master);
 	if (err != VaultError::None) return err;
 	Blob emk;
-	err = createEmk(master, pin, emk);
+	err = createEmk(master, pin, &emk);
 	if (err != VaultError::None) return err;
 	err = writeEmk(emk, true);
 	if (err != VaultError::None) return err;
@@ -369,13 +373,13 @@ VaultError Vault::setup(const SecureBuffer &pin)
 	return VaultError::None;
 }
 
-VaultError Vault::unlock(const SecureBuffer &pin)
+VaultError Vault::unlock(SecureBuffer const &pin)
 {
 	if (pin.empty()) return VaultError::InvalidArgument;
 	if (!backend_) return VaultError::BackendUnavailable;
 	if (!sodiumReady()) return VaultError::CryptoInitFailed;
 	SecureBuffer master;
-	const VaultError err = openEmk(pin, master);
+	const VaultError err = openEmk(pin, &master);
 	if (err != VaultError::None) return err;
 	lock();
 	mk_ = std::move(master);
@@ -383,17 +387,17 @@ VaultError Vault::unlock(const SecureBuffer &pin)
 	return VaultError::None;
 }
 
-VaultError Vault::encrypt(const SecureBuffer &plain, Blob *cipher)
+VaultError Vault::encrypt(SecureBuffer const &plain, Blob *cipher)
 {
 	return encryptBytes(plain.data(), plain.size(), cipher);
 }
 
-VaultError Vault::encrypt(const Blob &plain, Blob *cipher)
+VaultError Vault::encrypt(Blob const &plain, Blob *cipher)
 {
-	return encryptBytes(reinterpret_cast<const unsigned char *>(plain.data()), plain.size(), cipher);
+	return encryptBytes(reinterpret_cast<unsigned char const *>(plain.data()), plain.size(), cipher);
 }
 
-VaultError Vault::encryptBytes(const unsigned char *plain, size_t size, Blob *cipher)
+VaultError Vault::encryptBytes(unsigned char const *plain, size_t size, Blob *cipher)
 {
 	*cipher = { };
 	if (!isUnlocked()) return VaultError::Locked;
@@ -408,8 +412,8 @@ VaultError Vault::encryptBytes(const unsigned char *plain, size_t size, Blob *ci
 	unsigned long long encryptedLen = 0;
 	if (crypto_aead_xchacha20poly1305_ietf_encrypt(reinterpret_cast<unsigned char *>(encrypted.data()), &encryptedLen,
 			plain, size,
-			reinterpret_cast<const unsigned char *>(header.data()), header.size(), nullptr,
-			reinterpret_cast<const unsigned char *>(nonce.data()), mk_.data())
+			reinterpret_cast<unsigned char const *>(header.data()), header.size(), nullptr,
+			reinterpret_cast<unsigned char const *>(nonce.data()), mk_.data())
 		!= 0) {
 		return VaultError::InvalidArgument;
 	}
@@ -421,7 +425,7 @@ VaultError Vault::encryptBytes(const unsigned char *plain, size_t size, Blob *ci
 	return VaultError::None;
 }
 
-VaultError Vault::decryptToSecureBuffer(const Blob &cipher, SecureBuffer *plain)
+VaultError Vault::decryptToSecureBuffer(Blob const &cipher, SecureBuffer *plain)
 {
 	plain->clear();
 	if (!isUnlocked()) return VaultError::Locked;
@@ -440,9 +444,9 @@ VaultError Vault::decryptToSecureBuffer(const Blob &cipher, SecureBuffer *plain)
 	if (!result.empty() && !result.lock()) return VaultError::MemoryLockFailed;
 	unsigned long long resultLen = 0;
 	if (crypto_aead_xchacha20poly1305_ietf_decrypt(result.data(), &resultLen, nullptr,
-			reinterpret_cast<const unsigned char *>(encrypted.data()), encrypted.size(),
-			reinterpret_cast<const unsigned char *>(header.data()), header.size(),
-			reinterpret_cast<const unsigned char *>(nonce.data()), mk_.data())
+			reinterpret_cast<unsigned char const *>(encrypted.data()), encrypted.size(),
+			reinterpret_cast<unsigned char const *>(header.data()), header.size(),
+			reinterpret_cast<unsigned char const *>(nonce.data()), mk_.data())
 			!= 0
 		|| resultLen != result.size()) {
 		return VaultError::AuthenticationFailed;
@@ -451,22 +455,22 @@ VaultError Vault::decryptToSecureBuffer(const Blob &cipher, SecureBuffer *plain)
 	return VaultError::None;
 }
 
-VaultError Vault::changePin(const SecureBuffer &oldPin, const SecureBuffer &newPin)
+VaultError Vault::changePin(SecureBuffer const &oldPin, SecureBuffer const &newPin)
 {
 	if (oldPin.empty() || newPin.empty()) return VaultError::InvalidArgument;
 	if (!isUnlocked()) return VaultError::Locked;
 	SecureBuffer verifiedMaster;
-	VaultError err = openEmk(oldPin, verifiedMaster);
+	VaultError err = openEmk(oldPin, &verifiedMaster);
 	if (err != VaultError::None) return err;
 	// 保存されている EMK がメモリ上の MK と別物なら、誤って別の鍵を包み直さない
 	if (sodium_memcmp(verifiedMaster.data(), mk_.data(), MK_SIZE) != 0) return VaultError::CorruptedData;
 	Blob newEmk;
-	err = createEmk(verifiedMaster, newPin, newEmk);
+	err = createEmk(verifiedMaster, newPin, &newEmk);
 	if (err != VaultError::None) return err;
 	return writeEmk(newEmk, false);
 }
 
-VaultError Vault::reset(const SecureBuffer &newPin)
+VaultError Vault::reset(SecureBuffer const &newPin)
 {
 	if (newPin.empty()) return VaultError::InvalidArgument;
 	if (!backend_) return VaultError::BackendUnavailable;
@@ -477,7 +481,7 @@ VaultError Vault::reset(const SecureBuffer &newPin)
 	VaultError err = newMasterKey(&master);
 	if (err != VaultError::None) return err;
 	Blob emk;
-	err = createEmk(master, newPin, emk);
+	err = createEmk(master, newPin, &emk);
 	if (err != VaultError::None) return err;
 	err = writeEmk(emk, false);
 	if (err != VaultError::None) return err;

@@ -76,7 +76,7 @@ private:
 	std::string emkKey_;
 	Factory systemFactory_;
 
-	bool hasVault(ISecretStorageBackend &backend) const;
+	bool hasVault(ISecretStorageBackend *backend) const;
 };
 
 } // namespace localvault

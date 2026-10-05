@@ -20,13 +20,13 @@ namespace AtomicFile {
 	 *
 	 * 置き換えに失敗した場合、既存の path は変更されない。
 	 */
-	StorageStatus write(const std::filesystem::path &path, const Blob &data);
+	StorageStatus write(const std::filesystem::path &path, Blob const &data);
 
 	/**
 	 * @brief ファイル全体を読み出す
 	 * @return 存在しない場合は NotFound。maxSize を超える場合は Error
 	 */
-	StorageStatus read(const std::filesystem::path &path, Blob &out, size_t maxSize = 1024 * 1024);
+	StorageStatus read(const std::filesystem::path &path, Blob *out, size_t maxSize = 1024 * 1024);
 
 	/**
 	 * @brief ファイルを削除する

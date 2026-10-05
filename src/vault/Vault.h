@@ -68,13 +68,13 @@ private:
 	SecureBuffer mk_;
 	bool unlocked_ = false;
 
-	VaultError deriveKek(const SecureBuffer &pin, const Blob &salt, uint32_t opsLimit, uint32_t memLimit, SecureBuffer *kek) const;
-	VaultError createEmk(const SecureBuffer &mk, const SecureBuffer &pin, Blob *emk) const;
-	VaultError parseEmk(const Blob &emk, const SecureBuffer &pin, SecureBuffer *mk) const;
-	VaultError openEmk(const SecureBuffer &pin, SecureBuffer *mk);
-	VaultError writeEmk(const Blob &emk, bool createOnly);
-	VaultError encryptBytes(const unsigned char *plain, size_t size, Blob *cipher);
-	VaultError storeVerified(const std::string &key, const Blob &data);
+	VaultError deriveKek(SecureBuffer const &pin, Blob const &salt, uint32_t opsLimit, uint32_t memLimit, SecureBuffer *kek) const;
+	VaultError createEmk(SecureBuffer const &mk, SecureBuffer const &pin, Blob *emk) const;
+	VaultError parseEmk(Blob const &emk, SecureBuffer const &pin, SecureBuffer *mk) const;
+	VaultError openEmk(SecureBuffer const &pin, SecureBuffer *mk);
+	VaultError writeEmk(Blob const &emk, bool createOnly);
+	VaultError encryptBytes(unsigned char const *plain, size_t size, Blob *cipher);
+	VaultError storeVerified(std::string const &key, Blob const &data);
 
 	static VaultError newMasterKey(SecureBuffer *mk);
 
@@ -83,7 +83,7 @@ public:
 	 * @param backend EMK を保存するバックエンド。生存期間中は有効なポインタであること
 	 * @param emkKey バックエンド内での EMK の識別キー
 	 */
-	Vault(ISecretStorageBackend *backend, const std::string &emkKey = "vault_emk");
+	Vault(ISecretStorageBackend *backend, std::string const &emkKey = "vault_emk");
 	~Vault();
 
 	Vault(const Vault &) = delete;
@@ -101,19 +101,19 @@ public:
 	VaultState state() const;
 
 	/** バックエンド内でEMKを識別するキー */
-	const std::string &emkKey() const { return emkKey_; }
+	std::string const &emkKey() const { return emkKey_; }
 
 	/**
 	 * @brief 初回セットアップ。PIN から KEK を導出し、MK を生成・暗号化して保存する
 	 *
 	 * EMK が既に存在する場合は AlreadySetup を返し、上書きしない。
 	 */
-	[[nodiscard]] VaultError setup(const SecureBuffer &pin);
+	[[nodiscard]] VaultError setup(SecureBuffer const &pin);
 
 	/**
 	 * @brief PIN で Vault を解除し、MK をメモリ上に復号する
 	 */
-	[[nodiscard]] VaultError unlock(const SecureBuffer &pin);
+	[[nodiscard]] VaultError unlock(SecureBuffer const &pin);
 
 	/**
 	 * @brief メモリ上の MK を消去する
@@ -125,19 +125,19 @@ public:
 	 *
 	 * 機密データ（ユーザーが入力した API キー等）はこちらを使い、通常メモリを経由させないこと。
 	 */
-	[[nodiscard]] VaultError encrypt(const SecureBuffer &plain, Blob *cipher);
+	[[nodiscard]] VaultError encrypt(SecureBuffer const &plain, Blob *cipher);
 
 	/**
 	 * @brief 平文を暗号化する（機密性の低いデータ、または既に通常メモリ上にあるデータ用）
 	 */
-	[[nodiscard]] VaultError encrypt(const Blob &plain, Blob *cipher);
+	[[nodiscard]] VaultError encrypt(Blob const &plain, Blob *cipher);
 
 	/**
 	 * @brief 暗号文を復号する。unlock 済みである必要がある
 	 *
 	 * 平文は SecureBuffer に返され、使用後は明示的に clear() すること。
 	 */
-	[[nodiscard]] VaultError decryptToSecureBuffer(const Blob &cipher, SecureBuffer *plain);
+	[[nodiscard]] VaultError decryptToSecureBuffer(Blob const &cipher, SecureBuffer *plain);
 
 	/**
 	 * @brief PIN を変更する。unlock 済みである必要がある
@@ -145,7 +145,7 @@ public:
 	 * StorageError が返った場合でも、本キーの置き換えだけが失敗している可能性がある。
 	 * その場合は旧 PIN・新 PIN のどちらでも解除できる。
 	 */
-	[[nodiscard]] VaultError changePin(const SecureBuffer &oldPin, const SecureBuffer &newPin);
+	[[nodiscard]] VaultError changePin(SecureBuffer const &oldPin, SecureBuffer const &newPin);
 
 	/**
 	 * @brief 新しい MK と PIN で EMK を置き換える。
@@ -153,7 +153,7 @@ public:
 	 * 既存のMKで暗号化されたデータは復号不能になる不可逆操作。
 	 * 既存 EMK は新 EMK の書き込みに成功するまで削除しない。
 	 */
-	[[nodiscard]] VaultError reset(const SecureBuffer &newPin);
+	[[nodiscard]] VaultError reset(SecureBuffer const &newPin);
 
 	/**
 	 * @brief EMK（ステージングを含む）を削除し、ロックする。不可逆操作

@@ -49,19 +49,19 @@ public:
 	 * 既存データがある場合は置き換える。置き換えはアトミックに行い、
 	 * 失敗時に既存データを失ってはならない（削除してから追加する実装は不可）。
 	 */
-	virtual StorageStatus store(const std::string &key, const Blob &data) = 0;
+	virtual StorageStatus store(std::string const &key, Blob const &data) = 0;
 
 	/**
 	 * @brief key に対応する data を読み出す
 	 * @return 存在しない場合は NotFound（out は空）
 	 */
-	virtual StorageStatus load(const std::string &key, Blob &out) = 0;
+	virtual StorageStatus load(std::string const &key, Blob *out) = 0;
 
 	/**
 	 * @brief key に対応するデータを削除する
 	 * @return 存在しなかった場合は NotFound
 	 */
-	virtual StorageStatus remove(const std::string &key) = 0;
+	virtual StorageStatus remove(std::string const &key) = 0;
 };
 
 } // namespace localvault

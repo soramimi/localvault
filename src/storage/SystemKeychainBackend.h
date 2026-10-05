@@ -22,9 +22,23 @@ public:
 
 	bool isAvailable() const override;
 	std::string name() const override;
-	StorageStatus store(const std::string &key, const Blob &data) override;
-	StorageStatus load(const std::string &key, Blob &out) override;
-	StorageStatus remove(const std::string &key) override;
+	StorageStatus store(std::string const &key, Blob const &data) override;
+	StorageStatus load(std::string const &key, Blob *out) override;
+	StorageStatus remove(std::string const &key) override;
+
+	/**
+	 * @brief Linux (libsecret) で使用するスキーマ名を変更する
+	 *
+	 * デフォルトは "com.example.localvault.Vault"。
+	 */
+	void setSchemaName(std::string const &schemaName);
+
+	/**
+	 * @brief macOS (Keychain) で使用するサービス名を変更する
+	 *
+	 * デフォルトは "localvault-vault"。
+	 */
+	void setServiceName(std::string const &serviceName);
 
 private:
 	class Impl;

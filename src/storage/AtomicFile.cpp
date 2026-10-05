@@ -58,7 +58,7 @@ namespace {
 
 namespace AtomicFile {
 
-	StorageStatus write(const std::filesystem::path &path, const Blob &data)
+	StorageStatus write(const std::filesystem::path &path, Blob const &data)
 	{
 		const std::filesystem::path tempPath = path.string() + generateTempSuffix();
 
@@ -119,9 +119,10 @@ namespace AtomicFile {
 #endif
 	}
 
-	StorageStatus read(const std::filesystem::path &path, Blob &out, size_t maxSize)
+	StorageStatus read(const std::filesystem::path &path, Blob *out, size_t maxSize)
 	{
-		out.clear();
+		if (!out) return StorageStatus::Error;
+		out->clear();
 		std::error_code ec;
 		const auto status = std::filesystem::status(path, ec);
 		if (status.type() == std::filesystem::file_type::not_found) return StorageStatus::NotFound;
@@ -135,7 +136,7 @@ namespace AtomicFile {
 
 		Blob data(static_cast<size_t>(size));
 		if (size > 0 && !file.read(data.data(), size)) return StorageStatus::Error;
-		out = std::move(data);
+		*out = std::move(data);
 		return StorageStatus::Ok;
 	}
 
