@@ -5,9 +5,16 @@
 #include <cstdint>
 #include <vector>
 
+class SecurePinEdit;
 class LocalVaultTest;
 
 namespace localvault {
+
+#ifdef VAULT_ALLOW_EMPTY_PIN
+constexpr bool allow_empty_pin = true;
+#else
+constexpr bool allow_empty_pin = false;
+#endif
 
 namespace secure_memory {
 
@@ -50,7 +57,7 @@ namespace secure_memory {
  */
 class SecureBuffer {
 	friend class Vault;
-	friend class SecurePinEdit;
+	friend class ::SecurePinEdit;
 	friend class ::LocalVaultTest;
 
 private:
@@ -106,6 +113,14 @@ public:
 	bool assign(void const *data, size_t size);
 	bool append(void const *data, size_t size);
 };
+
+static inline bool validate_pin(SecureBuffer const &pin)
+{
+	if (!allow_empty_pin && pin.empty()) {
+		return false;
+	}
+	return true;
+}
 
 } // namespace localvault
 

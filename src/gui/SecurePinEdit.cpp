@@ -5,7 +5,7 @@
 #include <QStyle>
 #include <QStyleOptionFrame>
 
-namespace localvault {
+// namespace localvault {
 
 SecurePinEdit::SecurePinEdit(QWidget *parent)
 	: QWidget(parent)
@@ -15,6 +15,8 @@ SecurePinEdit::SecurePinEdit(QWidget *parent)
 	setAttribute(Qt::WA_KeyCompression, false);
 	setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
 	setCursor(Qt::IBeamCursor);
+	
+	setMaxLength(64);
 }
 
 SecurePinEdit::~SecurePinEdit()
@@ -37,9 +39,9 @@ bool SecurePinEdit::equals(const SecurePinEdit &other) const
 	return utf8_.equals(other.utf8_);
 }
 
-SecureBuffer SecurePinEdit::pin() const
+localvault::SecureBuffer SecurePinEdit::pin() const
 {
-	SecureBuffer result(utf8_.data(), utf8_.size());
+	localvault::SecureBuffer result(utf8_.data(), utf8_.size());
 	result.lock();
 	return result;
 }
@@ -85,7 +87,7 @@ void SecurePinEdit::appendText(const QString &text)
 		}
 		// SecureBuffer の拡張時、旧領域はアロケータがゼロクリアする
 		utf8_.append(bytes, len);
-		secure_memory::zero(bytes, sizeof(bytes));
+		localvault::secure_memory::zero(bytes, sizeof(bytes));
 		++length_;
 	}
 }
@@ -209,4 +211,4 @@ QSize SecurePinEdit::minimumSizeHint() const
 	return QSize(hint.width() / 2, hint.height());
 }
 
-} // namespace localvault
+// } // namespace localvault

@@ -162,7 +162,7 @@ VaultError Vault::deriveKek(SecureBuffer const &pin, Blob const &salt, uint32_t 
 {
 	if (!kek) return VaultError::InvalidArgument;
 	kek->clear();
-	if (pin.empty()) return VaultError::InvalidArgument;
+	if (!validate_pin(pin)) return VaultError::InvalidArgument;
 	if (salt.size() != SALT_SIZE
 		|| opsLimit < MIN_ARGON2_OPSLIMIT || opsLimit > MAX_ARGON2_OPSLIMIT
 		|| memLimit < MIN_ARGON2_MEMLIMIT || memLimit > MAX_ARGON2_MEMLIMIT) {
@@ -345,7 +345,7 @@ VaultError Vault::newMasterKey(SecureBuffer *mk)
 
 VaultError Vault::setup(SecureBuffer const &pin)
 {
-	if (pin.empty()) return VaultError::InvalidArgument;
+	if (!validate_pin(pin)) return VaultError::InvalidArgument;
 	if (!backend_) return VaultError::BackendUnavailable;
 	if (!sodiumReady()) return VaultError::CryptoInitFailed;
 	switch (state()) {
@@ -375,7 +375,7 @@ VaultError Vault::setup(SecureBuffer const &pin)
 
 VaultError Vault::unlock(SecureBuffer const &pin)
 {
-	if (pin.empty()) return VaultError::InvalidArgument;
+	if (!validate_pin(pin)) return VaultError::InvalidArgument;
 	if (!backend_) return VaultError::BackendUnavailable;
 	if (!sodiumReady()) return VaultError::CryptoInitFailed;
 	SecureBuffer master;
@@ -457,7 +457,8 @@ VaultError Vault::decryptToSecureBuffer(Blob const &cipher, SecureBuffer *plain)
 
 VaultError Vault::changePin(SecureBuffer const &oldPin, SecureBuffer const &newPin)
 {
-	if (oldPin.empty() || newPin.empty()) return VaultError::InvalidArgument;
+	if (!validate_pin(oldPin)) return VaultError::InvalidArgument;
+	if (!validate_pin(newPin)) return VaultError::InvalidArgument;
 	if (!isUnlocked()) return VaultError::Locked;
 	SecureBuffer verifiedMaster;
 	VaultError err = openEmk(oldPin, &verifiedMaster);
@@ -472,7 +473,7 @@ VaultError Vault::changePin(SecureBuffer const &oldPin, SecureBuffer const &newP
 
 VaultError Vault::reset(SecureBuffer const &newPin)
 {
-	if (newPin.empty()) return VaultError::InvalidArgument;
+	if (!validate_pin(newPin)) return VaultError::InvalidArgument;
 	if (!backend_) return VaultError::BackendUnavailable;
 	if (!sodiumReady()) return VaultError::CryptoInitFailed;
 

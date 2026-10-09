@@ -18,7 +18,7 @@ namespace localvault {
  */
 class FileBackend : public ISecretStorageBackend {
 public:
-	explicit FileBackend(const std::filesystem::path &directory = { });
+	explicit FileBackend(const std::filesystem::path &directory);
 
 	bool isAvailable() const override;
 	std::string name() const override;
@@ -31,6 +31,7 @@ private:
 
 	std::filesystem::path filePathForKey(std::string const &key) const;
 	static std::string sanitizeKey(std::string const &key);
+public:
 	static std::filesystem::path defaultConfigDirectory();
 };
 

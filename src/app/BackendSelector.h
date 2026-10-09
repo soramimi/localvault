@@ -57,9 +57,9 @@ public:
 	 * @param emkKey Vault の EMK キー
 	 * @param systemFactory OS ストレージバックエンドの生成関数（省略時は SystemKeychainBackend。テスト用）
 	 */
-	BackendSelector(std::filesystem::path configDir, std::string emkKey, Factory systemFactory = { });
-
-	BackendSelection select() const;
+	BackendSelector(const std::filesystem::path &configDir, const std::string &schema, const std::string &emkKey, const Factory &systemFactory = { });
+	
+	BackendSelection select(bool force_file_backend) const;
 
 	/** 保存先を記録する */
 	StorageStatus record(BackendKind kind) const;
@@ -73,9 +73,10 @@ public:
 
 private:
 	std::filesystem::path configDir_;
+	std::string schema_;
 	std::string emkKey_;
 	Factory systemFactory_;
-
+	
 	bool hasVault(ISecretStorageBackend *backend) const;
 };
 

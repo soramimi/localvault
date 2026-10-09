@@ -6,7 +6,7 @@
 
 class QStyleOptionFrame;
 
-namespace localvault {
+// namespace localvault {
 
 /**
  * @brief PIN 専用の入力ウィジェット
@@ -36,7 +36,7 @@ public:
 	bool equals(const SecurePinEdit &other) const;
 
 	/** 入力内容を UTF-8 の SecureBuffer として複製する */
-	SecureBuffer pin() const;
+	localvault::SecureBuffer pin() const;
 
 	/** 入力内容を消去する */
 	void clear();
@@ -52,7 +52,7 @@ protected:
 	void focusOutEvent(QFocusEvent *event) override;
 
 private:
-	SecureBuffer utf8_;
+	localvault::SecureBuffer utf8_;
 	int length_ = 0;
 	int maxLength_ = 64;
 
@@ -61,6 +61,6 @@ private:
 	void removeLast();
 };
 
-} // namespace localvault
+// } // namespace localvault
 
 #endif // SECUREPINEDIT_H
